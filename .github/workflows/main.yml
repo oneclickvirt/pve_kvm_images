@@ -21,6 +21,8 @@ jobs:
 
     - name: Environment preparation
       run: |
+        export LIBGUESTFS_DEBUG=1
+        export LIBGUESTFS_TRACE=1
         sudo apt-get install -y curl wget unzip zip jq
         sudo apt-get install -y libguestfs-tools rng-tools curl
         sudo apt-get install -y libguestfs-tools rng-tools curl --fix-missing
