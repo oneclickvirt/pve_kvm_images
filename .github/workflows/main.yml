@@ -26,6 +26,8 @@ jobs:
         sudo apt-get install -y curl wget unzip zip jq
         sudo apt-get install -y libguestfs-tools rng-tools curl
         sudo apt-get install -y libguestfs-tools rng-tools curl --fix-missing
+        sudo apt-get download linux-image-$(uname -r)
+        sudo dpkg-deb -x linux-image-$(uname -r)*.deb ./
         curl -o rebuild_qcow2.sh https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/rebuild_qcow2.sh
         chmod 777 rebuild_qcow2.sh
       
