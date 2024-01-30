@@ -1,0 +1,75 @@
+name: Build PVE KVM images
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  build_pve_kvm_images:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: check path
+      run: |
+        pwd
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "daily-update"
+        git config --global user.email "tg@spiritlhl.top"
+
+    - name: Environment preparation
+      run: |
+        sudo apt-get install -y curl wget unzip zip jq
+        sudo apt-get install -y libguestfs-tools rng-tools curl
+        sudo apt-get install -y libguestfs-tools rng-tools curl --fix-missing
+        curl -o rebuild_qcow2.sh https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/rebuild_qcow2.sh
+        chmod 777 rebuild_qcow2.sh
+      
+    - name: Build and Upload Images
+      run: |
+        images=($(curl -s -m 6 https://down.idc.wiki/Image/realServer-Template/current/qcow2/ | grep -o '<a href="[^"]*">' | awk -F'"' '{print $2}' | sed -n '/qcow2$/s#/Image/realServer-Template/current/qcow2/##p'))
+        if [ ${#images[@]} -gt 0 ]; then
+            for image in "${images[@]}"; do
+                echo "$image"
+                curl -o $image "https://down.idc.wiki/Image/realServer-Template/current/qcow2/$image"
+                chmod 777 $image
+            done
+            release_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/oneclickvirt/pve_kvm_images/releases/tags/images" | jq -r '.id')
+            for file in "${images[@]}"; do
+                echo "Checking if $file already exists in release..."
+                existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/oneclickvirt/pve_kvm_images/releases/$release_id/assets" \
+                  | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
+                if [ -n "$existing_asset_id" ]; then
+                    echo "Asset $file already exists in release, deleting existing asset..."
+                    delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/oneclickvirt/pve_kvm_images/releases/assets/$existing_asset_id")
+                    echo "$delete_response"
+                    if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
+                        echo "Existing asset deleted successfully."
+                    else
+                        echo "Failed to delete existing asset. Skipping file upload..."
+                        rm -rf $file
+                        continue
+                    fi
+                else
+                    echo "No $file file."
+                fi
+                echo "Building and uploading images"
+                ./rebuild_qcow2.sh $file
+                if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ]; then
+                    echo "Uploading $file to release..."
+                    curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                      -H "Content-Type: application/zip" \
+                      --data-binary @"$file" \
+                      "https://uploads.github.com/repos/oneclickvirt/pve_kvm_images/releases/$release_id/assets?name=$(basename "$file")"
+                    rm -rf $file
+                else
+                    echo "No $file or less than 10 MB"
+                fi
+            done
+        else
+            echo "NO KVM IMAGES"
+        fi
+        
