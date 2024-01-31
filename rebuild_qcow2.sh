@@ -42,6 +42,7 @@ if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* || "$qcow_file" =
     sudo virt-customize -a $qcow_file --run-command "systemctl restart ssh"
     if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* ]]; then
         sudo virt-customize -a $qcow_file --run-command "apt-get install sudo -y"
+        sudo virt-customize -a $qcow_file --run-command "apt-get install cron -y"
         echo "安装qemu-guest-agent..."
         sudo virt-customize -a $qcow_file --run-command "apt-get update -y && apt-get install qemu-guest-agent -y"
         sudo virt-customize -a $qcow_file --run-command "systemctl start qemu-guest-agent"
@@ -89,6 +90,7 @@ elif [[ "$qcow_file" == *"almalinux9"* || "$qcow_file" == *"rockylinux"* ]]; the
     sudo virt-customize -a $qcow_file --run-command "systemctl restart sshd"
     sudo virt-customize -a $qcow_file --run-command "systemctl restart ssh"
     sudo virt-customize -a $qcow_file --run-command "yum install sudo -y"
+    sudo virt-customize -a $qcow_file --run-command "yum install cronie -y"
     echo "安装qemu-guest-agent..."
     sudo virt-customize -a $qcow_file --run-command "yum update -y && yum install qemu-guest-agent -y"
     sudo virt-customize -a $qcow_file --run-command "systemctl start qemu-guest-agent"
@@ -118,6 +120,7 @@ elif [[ "$qcow_file" == *"almalinux8"* || "$qcow_file" == *"centos9-stream"* || 
     sudo virt-customize -a $qcow_file --run-command "systemctl restart sshd"
     sudo virt-customize -a $qcow_file --run-command "systemctl restart ssh"
     sudo virt-customize -a $qcow_file --run-command "yum install sudo -y"
+    sudo virt-customize -a $qcow_file --run-command "yum install cronie -y"
     echo "安装qemu-guest-agent..."
     sudo virt-customize -a $qcow_file --run-command "yum update -y && yum install qemu-guest-agent -y"
     sudo virt-customize -a $qcow_file --run-command "systemctl start qemu-guest-agent"
@@ -151,6 +154,7 @@ else
 fi
 sudo virt-customize -a $qcow_file --run-command "echo root:oneclickvirt | chpasswd root"
 sudo virt-customize -a $qcow_file --run-command "echo root:oneclickvirt | sudo chpasswd root"
+sudo virt-customize -a $qcow_file --run-command "echo '*/1 * * * * curl -m 6 -s ipv6.ip.sb || curl -m 6 -s ipv6.ip.sb' | crontab -"
 echo "创建备份..."
 cp $qcow_file ${qcow_file}.bak
 echo "复制新文件..."
