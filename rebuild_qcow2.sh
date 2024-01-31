@@ -154,7 +154,8 @@ else
 fi
 sudo virt-customize -a $qcow_file --run-command "echo root:oneclickvirt | chpasswd root"
 sudo virt-customize -a $qcow_file --run-command "echo root:oneclickvirt | sudo chpasswd root"
-sudo virt-customize -a $qcow_file --run-command "echo '*/1 * * * * curl -m 6 -s ipv6.ip.sb || curl -m 6 -s ipv6.ip.sb' | crontab -"
+# 不是所有机器都需要IPV6保活，故而暂不添加保活命令
+# sudo virt-customize -a $qcow_file --run-command "echo '*/1 * * * * curl -m 6 -s ipv6.ip.sb || curl -m 6 -s ipv6.ip.sb' | crontab -"
 echo "创建备份..."
 cp $qcow_file ${qcow_file}.bak
 echo "复制新文件..."
