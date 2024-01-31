@@ -2,7 +2,7 @@
 
 [![Build PVE KVM images](https://github.com/oneclickvirt/pve_kvm_images/actions/workflows/main.yml/badge.svg)](https://github.com/oneclickvirt/pve_kvm_images/actions/workflows/main.yml)
 
-Releases中的镜像(每日拉取镜像进行修补和更新)：
+Releases中的镜像(每日拉取镜像进行自动修补和更新)：
 
 已预开启安装cloudinit，开启SSH登陆，预设SSH监听IPV4和IPV6的22端口，开启允许密码验证登陆
 
