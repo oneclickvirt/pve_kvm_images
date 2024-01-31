@@ -41,18 +41,16 @@ jobs:
             done
             release_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/oneclickvirt/pve_kvm_images/releases/tags/images" | jq -r '.id')
             for file in "${images[@]}"; do
-                echo "Checking if $file already exists in release..."
-                existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" \
-                  "https://api.github.com/repos/oneclickvirt/pve_kvm_images/releases/$release_id/assets" \
-                  | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
+                echo "\nChecking if $file already exists in release..."
+                existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/oneclickvirt/pve_kvm_images/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
                 if [ -n "$existing_asset_id" ]; then
-                    echo "Asset $file already exists in release, deleting existing asset..."
+                    echo "\nAsset $file already exists in release, deleting existing asset..."
                     delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/oneclickvirt/pve_kvm_images/releases/assets/$existing_asset_id")
-                    echo "$delete_response"
+                    echo "\n$delete_response"
                     if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
-                        echo "Existing asset deleted successfully."
+                        echo "\nExisting asset deleted successfully."
                     else
-                        echo "Failed to delete existing asset. Skipping file upload..."
+                        echo "\nFailed to delete existing asset. Skipping file upload..."
                         rm -rf $file
                         continue
                     fi
@@ -62,14 +60,14 @@ jobs:
                 echo "Building and uploading images"
                 ./rebuild_qcow2.sh $file
                 if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ]; then
-                    echo "Uploading $file to release..."
+                    echo "\nUploading $file to release..."
                     curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                       -H "Content-Type: application/zip" \
                       --data-binary @"$file" \
                       "https://uploads.github.com/repos/oneclickvirt/pve_kvm_images/releases/$release_id/assets?name=$(basename "$file")"
                     rm -rf $file
                 else
-                    echo "No $file or less than 10 MB"
+                    echo "\nNo $file or less than 10 MB"
                 fi
             done
         else
