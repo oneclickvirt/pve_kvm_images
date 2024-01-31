@@ -14,6 +14,12 @@ Releases中的镜像(每日拉取镜像进行修补和更新)：
 
 如果使用务必自行修改密码，否则会有被骇入的风险
 
+旧的通过手动修补的镜像仓库：
+
+https://github.com/oneclickvirt/kvm_images
+
+会支持一些旧的镜像
+
 ## 感谢
 
 https://down.idc.wiki/Image/realServer-Template/current/qcow2/
