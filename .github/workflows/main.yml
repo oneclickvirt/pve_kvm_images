@@ -1,7 +1,7 @@
 name: Build PVE KVM images
 on:
-  schedule:
-    - cron: '34 12 * * *'
+  # schedule:
+  #   - cron: '34 12 * * *'
   workflow_dispatch:
 
 jobs:
