@@ -69,7 +69,7 @@ jobs:
                     echo "\nUploading $file to release..."
                     curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                       -H "Content-Type: application/zip" \
-                      --data-binary @"$file" \
+                      -T "$file" \
                       "https://uploads.github.com/repos/oneclickvirt/pve_kvm_images/releases/$release_id/assets?name=$(basename "$file")"
                     rm -rf $file
                 else
