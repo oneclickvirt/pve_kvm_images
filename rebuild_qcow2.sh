@@ -17,6 +17,7 @@ then
 fi
 # sudo apt-get install -y passt
 export LIBGUESTFS_BACKEND=direct
+export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
 ls -l /dev/kvm
 ls -l /var/lib/libvirt/
 qcow_file=$1
