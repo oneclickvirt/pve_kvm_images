@@ -15,7 +15,8 @@ then
     sudo apt-get install -y rng-tools
     sudo apt-get install -y rng-tools --fix-missing
 fi
-sudo apt-get install -y passt
+# sudo apt-get install -y passt
+export LIBGUESTFS_BACKEND=direct
 ls -l /dev/kvm
 ls -l /var/lib/libvirt/
 qcow_file=$1
