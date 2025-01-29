@@ -20,10 +20,6 @@ echo "----------------------------------------------------------"
 echo "转换文件$qcow_file中......"
 if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* || "$qcow_file" == *"arch"* ]]; then
     sudo virt-customize -a $qcow_file --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-    sudo virt-customize -a $qcow_file --run-command "echo '' > /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
     echo "启用SSH功能..."
     sudo virt-customize -a $qcow_file --run-command "systemctl enable ssh"
     sudo virt-customize -a $qcow_file --run-command "systemctl start ssh"
@@ -65,10 +61,6 @@ if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* || "$qcow_file" =
     fi
 elif [[ "$qcow_file" == *"alpine"* ]]; then
     sudo virt-customize -a $qcow_file --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-    sudo virt-customize -a $qcow_file --run-command "echo '' > /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
     echo "安装依赖..."
     sudo virt-customize -a $qcow_file --run-command "apk update"
     sudo virt-customize -a $qcow_file --run-command "apk add --no-cache openssh-server"
@@ -96,10 +88,6 @@ elif [[ "$qcow_file" == *"alpine"* ]]; then
     sudo virt-customize -a $qcow_file --run-command "/usr/sbin/sshd"
 elif [[ "$qcow_file" == *"almalinux9"* || "$qcow_file" == *"rockylinux"* ]]; then
     sudo virt-customize -a $qcow_file --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-    sudo virt-customize -a $qcow_file --run-command "echo '' > /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
     sudo virt-customize -a $qcow_file --run-command "yum update -y"
     sudo virt-customize -a $qcow_file --run-command "yum install sudo -y"
     sudo virt-customize -a $qcow_file --run-command "yum install cronie -y"
@@ -132,10 +120,6 @@ elif [[ "$qcow_file" == *"almalinux9"* || "$qcow_file" == *"rockylinux"* ]]; the
     sudo virt-customize -a $qcow_file --run-command "systemctl enable qemu-guest-agent"
 elif [[ "$qcow_file" == *"almalinux8"* || "$qcow_file" == *"centos9-stream"* || "$qcow_file" == *"centos8-stream"* || "$qcow_file" == *"centos7"* ]]; then
     sudo virt-customize -a $qcow_file --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-    sudo virt-customize -a $qcow_file --run-command "echo '' > /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
     sudo virt-customize -a $qcow_file --run-command "yum update -y"
     sudo virt-customize -a $qcow_file --run-command "yum install sudo -y"
     sudo virt-customize -a $qcow_file --run-command "yum install cronie -y"
@@ -168,10 +152,6 @@ elif [[ "$qcow_file" == *"almalinux8"* || "$qcow_file" == *"centos9-stream"* || 
 else
     sudo virt-customize -a $qcow_file --run-command "sed -i 's/disable_root:[[:space:]]*1/disable_root: 0/g' /etc/cloud/cloud.cfg"
     sudo virt-customize -a $qcow_file --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-    sudo virt-customize -a $qcow_file --run-command "echo '' > /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-    sudo virt-customize -a $qcow_file --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
     sudo virt-customize -a $qcow_file --run-command "dnf update -y"
     sudo virt-customize -a $qcow_file --run-command "dnf install sudo -y"
     sudo virt-customize -a $qcow_file --run-command "dnf install cronie -y"
@@ -200,6 +180,10 @@ else
     sudo virt-customize -a $qcow_file --run-command "systemctl start qemu-guest-agent"
     sudo virt-customize -a $qcow_file --run-command "systemctl enable qemu-guest-agent"
 fi
+sudo virt-customize -a $qcow_file --run-command "echo '' > /etc/motd"
+sudo virt-customize -a $qcow_file --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
+sudo virt-customize -a $qcow_file --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
+sudo virt-customize -a $qcow_file --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
 sudo virt-customize -a $qcow_file --run-command "echo root:oneclickvirt | chpasswd root"
 sudo virt-customize -a $qcow_file --run-command "echo root:oneclickvirt | sudo chpasswd root"
 # 不是所有机器都需要IPV6保活，故而暂不添加保活命令
