@@ -24,6 +24,8 @@ https://github.com/oneclickvirt/kvm_images
 
 会支持一些旧的镜像
 
+本仓库的虚拟机镜像服务于： https://github.com/oneclickvirt/pve
+
 ## Introduce
 
 Mirrors in Releases (pulls mirrors daily for automatic patching and updating):
@@ -45,6 +47,8 @@ Older repositories that were patched manually:
 https://github.com/oneclickvirt/kvm_images
 
 Some older mirrors will be supported
+
+This repository VM images serves https://github.com/oneclickvirt/pve
 
 ## 感谢
 
