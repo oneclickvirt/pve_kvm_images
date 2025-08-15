@@ -1,11 +1,11 @@
-name: Build Almalinux Cloud Images
+name: Build RockyLinux Cloud Images
 on:
   schedule:
-    - cron: "34 14 * * *"
+    - cron: "34 15 * * *"
   workflow_dispatch:
 
 jobs:
-  build_almalinux_cloud_images:
+  build_rockylinux_cloud_images:
     runs-on: pve-1
     steps:
       - uses: actions/checkout@v2
@@ -30,39 +30,38 @@ jobs:
           sudo apt-get install -y libguestfs-tools rng-tools curl axel
           sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
 
-      - name: Build Almalinux Images
+      - name: Build RockyLinux Images
         run: |
           # 定义版本信息 (从新到旧)
-          declare -A almalinux_versions
-          almalinux_versions["10"]="10"
-          almalinux_versions["9"]="9"
-          almalinux_versions["8"]="8"
+          declare -A rockylinux_versions
+          rockylinux_versions["9"]="9"
+          rockylinux_versions["8"]="8"
           # 按版本顺序处理 (从新到旧)
-          for version in "10" "9" "8"; do
-              echo "=== Processing Almalinux $version ==="
+          for version in "9" "8"; do
+              echo "=== Processing RockyLinux $version ==="
               # 清理之前的文件
-              rm -f almalinux-${version}.qcow2 almalinux-${version}-custom.qcow2 almalinux${version}.qcow2
+              rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
               # 下载镜像
-              echo "Downloading Almalinux $version Cloud Image"
-              download_url="https://repo.almalinux.org/almalinux/${version}/cloud/x86_64/images/AlmaLinux-${version}-GenericCloud-latest.x86_64.qcow2"
-              axel -n 8 -o almalinux-${version}.qcow2 "$download_url"
+              echo "Downloading RockyLinux $version Cloud Image"
+              download_url="https://download.rockylinux.org/pub/rocky/${version}/images/x86_64/Rocky-${version}-GenericCloud-Base.latest.x86_64.qcow2"
+              axel -n 8 -o rockylinux-${version}.qcow2 "$download_url"
               if [ $? -ne 0 ]; then
                   echo "Axel failed, trying with curl"
-                  curl -o almalinux-${version}.qcow2 "$download_url"
+                  curl -o rockylinux-${version}.qcow2 "$download_url"
                   if [ $? -ne 0 ]; then
-                      echo "Failed to download Almalinux $version, skipping..."
+                      echo "Failed to download RockyLinux $version, skipping..."
                       continue
                   fi
               fi
-              if [ ! -f "almalinux-${version}.qcow2" ] || [ $(stat -c %s "almalinux-${version}.qcow2") -lt 10485760 ]; then
-                  echo "Download failed or file too small for Almalinux $version, skipping..."
-                  rm -f almalinux-${version}.qcow2
+              if [ ! -f "rockylinux-${version}.qcow2" ] || [ $(stat -c %s "rockylinux-${version}.qcow2") -lt 10485760 ]; then
+                  echo "Download failed or file too small for RockyLinux $version, skipping..."
+                  rm -f rockylinux-${version}.qcow2
                   continue
               fi
-              chmod 644 almalinux-${version}.qcow2
+              chmod 644 rockylinux-${version}.qcow2
               # 自定义镜像
-              echo "Customizing Almalinux $version image"
-              virt-customize -a almalinux-${version}.qcow2 \
+              echo "Customizing RockyLinux $version image"
+              virt-customize -a rockylinux-${version}.qcow2 \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
@@ -77,51 +76,51 @@ jobs:
                 --delete "/var/cache/dnf/*" \
                 --truncate "/etc/machine-id"
               if [ $? -ne 0 ]; then
-                  echo "Failed to customize Almalinux $version image, skipping..."
-                  rm -f almalinux-${version}.qcow2
+                  echo "Failed to customize RockyLinux $version image, skipping..."
+                  rm -f rockylinux-${version}.qcow2
                   continue
               fi
-              echo "Configuring SSH and root access for Almalinux $version..."
+              echo "Configuring SSH and root access for RockyLinux $version..."
               # SSH配置 - 启用密码认证和root登录
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable sshd"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
-              echo "Configuring qemu-guest-agent for Almalinux $version..."
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
+              echo "Configuring qemu-guest-agent for RockyLinux $version..."
               # qemu-guest-agent配置
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
-              echo "Setting root password and MOTD for Almalinux $version..."
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
+              echo "Setting root password and MOTD for RockyLinux $version..."
               # 设置root密码
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
               # 设置MOTD
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
               # 压缩镜像
-              echo "Compressing Almalinux $version image"
-              virt-sparsify --compress almalinux-${version}.qcow2 almalinux-${version}-custom.qcow2
+              echo "Compressing RockyLinux $version image"
+              virt-sparsify --compress rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2
               if [ $? -ne 0 ]; then
-                  echo "Failed to compress Almalinux $version image, skipping..."
-                  rm -f almalinux-${version}.qcow2 almalinux-${version}-custom.qcow2
+                  echo "Failed to compress RockyLinux $version image, skipping..."
+                  rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2
                   continue
               fi
-              mv almalinux-${version}-custom.qcow2 almalinux${version}.qcow2
-              ls -lh almalinux${version}.qcow2
+              mv rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
+              ls -lh rockylinux${version}.qcow2
               # 上传镜像
-              file="almalinux${version}.qcow2"
+              file="rockylinux${version}.qcow2"
               if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
                   echo "Processing file: $file"
-                  release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/almalinux" | jq -r '.id')
+                  release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/rockylinux" | jq -r '.id')
                   if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
-                      echo "Release 'almalinux' not found, please create it first"
-                      rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2
+                      echo "Release 'rockylinux' not found, please create it first"
+                      rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2
                       continue
                   fi
                   echo "Found release ID: $release_id"
@@ -135,7 +134,7 @@ jobs:
                           echo "Existing asset deleted successfully."
                       else
                           echo "Failed to delete existing asset for $file. Skipping file upload..."
-                          rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2
+                          rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2
                           continue
                       fi
                   else
@@ -163,9 +162,9 @@ jobs:
                   fi
               fi
               # 清理当前版本的文件
-              echo "Cleaning up files for Almalinux $version"
-              rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2
-              echo "=== Completed processing Almalinux $version ==="
+              echo "Cleaning up files for RockyLinux $version"
+              rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2
+              echo "=== Completed processing RockyLinux $version ==="
               echo ""
           done
-          echo "All Almalinux versions processed!"
+          echo "All RockyLinux versions processed!"
