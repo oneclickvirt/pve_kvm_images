@@ -29,8 +29,6 @@ jobs:
         sudo apt-get install -y curl wget unzip zip jq
         sudo apt-get install -y libguestfs-tools rng-tools curl axel
         sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
-        ls -l /dev/kvm
-        ls -l /var/lib/libvirt/
 
     - name: Download Debian Cloud Image
       run: |
