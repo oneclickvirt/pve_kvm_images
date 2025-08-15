@@ -37,7 +37,7 @@ jobs:
           debian_versions["13"]="trixie"
           debian_versions["12"]="bookworm" 
           debian_versions["11"]="bullseye"
-          debian_versions["10"]="buster"
+          # debian_versions["10"]="buster"
           # 按版本顺序处理 (从新到旧)
           for version in 13 12 11 10; do
               codename=${debian_versions[$version]}
@@ -62,13 +62,6 @@ jobs:
                   continue
               fi
               chmod 644 debian-${version}.qcow2
-              
-              # 根据版本选择包
-              base_pkgs="sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,axel,net-tools,iputils-ping,iputils-arping,iputils-tracepath,nano,most,screen,less,vim,bzip2,lldpd,mtr-tiny,htop,bind9-host,cron,lsof"
-              if [ "$version" -ge 11 ]; then
-                  base_pkgs="$base_pkgs,zstd"
-              fi
-
               # 自定义镜像
               echo "Customizing Debian $version image"
               virt-customize -a debian-${version}.qcow2 \
@@ -81,7 +74,7 @@ jobs:
                 --run-command "sed -i 's|Types: deb deb-src|Types: deb|g' /etc/apt/sources.list.d/debian.sources || true" \
                 --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/01_debian_cloud.cfg || true" \
                 --update \
-                --install "$base_pkgs" \
+                --install "sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,axel,net-tools,iputils-ping,iputils-arping,iputils-tracepath,nano,most,screen,less,vim,bzip2,lldpd,mtr-tiny,htop,dnsutils,zstd,cron,lsof" \
                 --run-command "apt-get -y autoremove --purge && apt-get -y clean" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
                 --delete "/var/log/*.log" \
@@ -93,8 +86,8 @@ jobs:
                   rm -f debian-${version}.qcow2
                   continue
               fi
-
               echo "Configuring SSH and root access for Debian $version..."
+              # SSH配置 - 启用密码认证和root登录
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "systemctl enable ssh"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
@@ -104,18 +97,19 @@ jobs:
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
-
               echo "Configuring qemu-guest-agent for Debian $version..."
+              # qemu-guest-agent配置
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
-
               echo "Setting root password and MOTD for Debian $version..."
+              # 设置root密码
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
+              # 设置MOTD
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "echo '' > /etc/motd"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
-
+              # 压缩镜像
               echo "Compressing Debian $version image"
               virt-sparsify --compress debian-${version}.qcow2 debian-${version}-custom.qcow2
               if [ $? -ne 0 ]; then
@@ -125,7 +119,6 @@ jobs:
               fi
               mv debian-${version}-custom.qcow2 debian${version}.qcow2
               ls -lh debian${version}.qcow2
-
               # 上传镜像
               file="debian${version}.qcow2"
               if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
@@ -174,7 +167,7 @@ jobs:
                       echo "File size: $file_size bytes"
                   fi
               fi
-
+              # 清理当前版本的文件
               echo "Cleaning up files for Debian $version"
               rm -f debian-${version}.qcow2 debian${version}.qcow2
               echo "=== Completed processing Debian $version ==="
