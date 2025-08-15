@@ -39,7 +39,7 @@ jobs:
           debian_versions["11"]="bullseye"
           # debian_versions["10"]="buster"
           # 按版本顺序处理 (从新到旧)
-          for version in 13 12 11 10; do
+          for version in 13 12 11; do
               codename=${debian_versions[$version]}
               echo "=== Processing Debian $version ($codename) ==="
               # 清理之前的文件
