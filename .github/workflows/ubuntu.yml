@@ -1,0 +1,176 @@
+name: Build Ubuntu Cloud Images
+on:
+  schedule:
+    - cron: "34 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  build_ubuntu_cloud_images:
+    runs-on: pve-1
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: check path
+        run: |
+          pwd
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "daily-update"
+          git config --global user.email "tg@spiritlhl.top"
+
+      - name: Environment preparation
+        run: |
+          export LIBGUESTFS_DEBUG=1
+          export LIBGUESTFS_TRACE=1
+          export LIBGUESTFS_BACKEND=direct
+          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
+          sudo apt-get update
+          sudo apt-get install -y curl wget unzip zip jq
+          sudo apt-get install -y libguestfs-tools rng-tools curl axel
+          sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
+
+      - name: Build Ubuntu Images
+        run: |
+          # 定义版本信息 (从新到旧)
+          declare -A ubuntu_versions
+          ubuntu_versions["24.04"]="noble"
+          ubuntu_versions["22.04"]="jammy" 
+          ubuntu_versions["20.04"]="focal"
+          ubuntu_versions["18.04"]="bionic"
+          # 按版本顺序处理 (从新到旧)
+          for version in "24.04" "22.04" "20.04" "18.04"; do
+              codename=${ubuntu_versions[$version]}
+              version_clean=${version//./}
+              echo "=== Processing Ubuntu $version ($codename) ==="
+              # 清理之前的文件
+              rm -f ubuntu-${version}.qcow2 ubuntu-${version}-custom.qcow2 ubuntu${version_clean}.qcow2
+              # 下载镜像
+              echo "Downloading Ubuntu $version Cloud Image"
+              download_url="https://cloud-images.ubuntu.com/${codename}/current/${codename}-server-cloudimg-amd64.img"
+              axel -n 8 -o ubuntu-${version}.qcow2 "$download_url"
+              if [ $? -ne 0 ]; then
+                  echo "Axel failed, trying with curl"
+                  curl -o ubuntu-${version}.qcow2 "$download_url"
+                  if [ $? -ne 0 ]; then
+                      echo "Failed to download Ubuntu $version, skipping..."
+                      continue
+                  fi
+              fi
+              if [ ! -f "ubuntu-${version}.qcow2" ] || [ $(stat -c %s "ubuntu-${version}.qcow2") -lt 10485760 ]; then
+                  echo "Download failed or file too small for Ubuntu $version, skipping..."
+                  rm -f ubuntu-${version}.qcow2
+                  continue
+              fi
+              chmod 644 ubuntu-${version}.qcow2
+              # 自定义镜像
+              echo "Customizing Ubuntu $version image"
+              virt-customize -a ubuntu-${version}.qcow2 \
+                --smp 2 \
+                --timezone Asia/Hong_Kong \
+                --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
+                --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
+                --run-command "update-grub" \
+                --run-command "systemctl enable serial-getty@ttyS1.service" \
+                --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/*ubuntu*.cfg || true" \
+                --update \
+                --install "sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,axel,net-tools,iputils-ping,iputils-arping,iputils-tracepath,nano,most,screen,less,vim,bzip2,lldpd,mtr-tiny,htop,dnsutils,zstd,cron,lsof" \
+                --run-command "apt-get -y autoremove --purge && apt-get -y clean" \
+                --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+                --delete "/var/log/*.log" \
+                --delete "/var/lib/apt/lists/*" \
+                --delete "/var/cache/apt/*" \
+                --truncate "/etc/machine-id"
+              if [ $? -ne 0 ]; then
+                  echo "Failed to customize Ubuntu $version image, skipping..."
+                  rm -f ubuntu-${version}.qcow2
+                  continue
+              fi
+              echo "Configuring SSH and root access for Ubuntu $version..."
+              # SSH配置 - 启用密码认证和root登录
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "systemctl enable ssh"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
+              echo "Configuring qemu-guest-agent for Ubuntu $version..."
+              # qemu-guest-agent配置
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
+              echo "Setting root password and MOTD for Ubuntu $version..."
+              # 设置root密码
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
+              # 设置MOTD
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "echo '' > /etc/motd"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+              # 压缩镜像
+              echo "Compressing Ubuntu $version image"
+              virt-sparsify --compress ubuntu-${version}.qcow2 ubuntu-${version}-custom.qcow2
+              if [ $? -ne 0 ]; then
+                  echo "Failed to compress Ubuntu $version image, skipping..."
+                  rm -f ubuntu-${version}.qcow2 ubuntu-${version}-custom.qcow2
+                  continue
+              fi
+              mv ubuntu-${version}-custom.qcow2 ubuntu${version_clean}.qcow2
+              ls -lh ubuntu${version_clean}.qcow2
+              # 上传镜像
+              file="ubuntu${version_clean}.qcow2"
+              if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
+                  echo "Processing file: $file"
+                  release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/ubuntu" | jq -r '.id')
+                  if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
+                      echo "Release 'ubuntu' not found, please create it first"
+                      rm -f ubuntu-${version}.qcow2 ubuntu${version_clean}.qcow2
+                      continue
+                  fi
+                  echo "Found release ID: $release_id"
+                  echo "Checking if $file already exists in release..."
+                  existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
+                  if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
+                      echo "Asset $file already exists in release, deleting existing asset..."
+                      delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
+                      echo "$delete_response"
+                      if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
+                          echo "Existing asset deleted successfully."
+                      else
+                          echo "Failed to delete existing asset for $file. Skipping file upload..."
+                          rm -f ubuntu-${version}.qcow2 ubuntu${version_clean}.qcow2
+                          continue
+                      fi
+                  else
+                      echo "No existing $file file found in release."
+                  fi
+                  echo "Uploading $file to release..."
+                  upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                    -H "Content-Type: application/octet-stream" \
+                    -T "$file" \
+                    "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
+                  echo "Upload response: $upload_response"
+                  if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
+                      echo "Successfully uploaded $file"
+                      download_url=$(echo "$upload_response" | jq -r '.browser_download_url')
+                      echo "Download URL: $download_url"
+                  else
+                      echo "Failed to upload $file"
+                      echo "Response: $upload_response"
+                  fi
+              else
+                  echo "File $file does not exist, is too small (< 10MB), or is too large (> 2GB)"
+                  if [ -f "$file" ]; then
+                      file_size=$(stat -c %s "$file")
+                      echo "File size: $file_size bytes"
+                  fi
+              fi
+              # 清理当前版本的文件
+              echo "Cleaning up files for Ubuntu $version"
+              rm -f ubuntu-${version}.qcow2 ubuntu${version_clean}.qcow2
+              echo "=== Completed processing Ubuntu $version ==="
+              echo ""
+          done
+          echo "All Ubuntu versions processed!"
