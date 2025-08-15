@@ -64,7 +64,6 @@ jobs:
         # SSH配置 - 启用密码认证和root登录
         sudo virt-customize -v -x -a debian-13.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
         sudo virt-customize -v -x -a debian-13.qcow2 --run-command "systemctl enable ssh"
-        sudo virt-customize -v -x -a debian-13.qcow2 --run-command "systemctl enable sshd"
         sudo virt-customize -v -x -a debian-13.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
         sudo virt-customize -v -x -a debian-13.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
         sudo virt-customize -v -x -a debian-13.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
