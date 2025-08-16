@@ -33,27 +33,80 @@ jobs:
       - name: Build Kali Images
         run: |
           declare -A kali_versions
-          kali_versions["2024.4"]="2024.4"
-          kali_versions["2024.3"]="2024.3"
-          kali_versions["2024.2"]="2024.2"
-          for version in "2024.4" "2024.3" "2024.2"; do
+          kali_versions["current"]="current"
+          for version in "current"; do
               echo "=== Processing Kali $version ==="
-              rm -f kali-${version}.qcow2 kali-${version}-custom.qcow2 kali${version}.qcow2
-              echo "Downloading Kali $version Cloud Image"
-              download_url="https://cdimage.kali.org/kali-${version}/kali-linux-${version}-cloud-amd64.qcow2"
-              axel -n 8 -o kali-${version}.qcow2 "$download_url"
+              rm -f kali-${version}.iso kali-${version}.qcow2 kali-${version}-custom.qcow2 kali${version}.qcow2
+              echo "Downloading Kali $version Live ISO"
+              if [ "$version" = "current" ]; then
+                  download_url="https://cdimage.kali.org/current/kali-linux-2025.2-live-amd64.iso"
+                  version_name="current"
+              else
+                  download_url="https://cdimage.kali.org/kali-${version}/kali-linux-${version}-live-amd64.iso"
+                  version_name="$version"
+              fi
+              echo "Downloading from: $download_url"
+              axel -n 8 -o kali-${version}.iso "$download_url"
               if [ $? -ne 0 ]; then
                   echo "Axel failed, trying with curl"
-                  curl -o kali-${version}.qcow2 "$download_url"
+                  curl -o kali-${version}.iso "$download_url"
                   if [ $? -ne 0 ]; then
                       echo "Failed to download Kali $version, skipping..."
                       continue
                   fi
               fi
-              if [ ! -f "kali-${version}.qcow2" ] || [ $(stat -c %s "kali-${version}.qcow2") -lt 10485760 ]; then
+              if [ ! -f "kali-${version}.iso" ] || [ $(stat -c %s "kali-${version}.iso") -lt 1073741824 ]; then
                   echo "Download failed or file too small for Kali $version, skipping..."
-                  rm -f kali-${version}.qcow2
+                  rm -f kali-${version}.iso
                   continue
+              fi
+              echo "Converting ISO to qcow2 for Kali $version"
+              qemu-img create -f qcow2 kali-${version}.qcow2 20G
+              if [ $? -ne 0 ]; then
+                  echo "Failed to create qcow2 image for Kali $version, skipping..."
+                  rm -f kali-${version}.iso
+                  continue
+              fi
+              echo "Installing Kali $version from ISO to qcow2 using virt-install"
+              sudo virt-install \
+                --name kali-temp-${version} \
+                --ram 2048 \
+                --vcpus 2 \
+                --disk path=kali-${version}.qcow2,format=qcow2 \
+                --cdrom kali-${version}.iso \
+                --os-type linux \
+                --os-variant debian11 \
+                --network network=default \
+                --graphics none \
+                --console pty,target_type=serial \
+                --location kali-${version}.iso \
+                --extra-args "console=ttyS0,115200n8 serial auto=true priority=critical preseed/file=/cdrom/install/preseed.cfg" \
+                --initrd-inject=/dev/null \
+                --noreboot \
+                --wait=-1 || true
+              if [ $? -ne 0 ]; then
+                  echo "Automated installation failed, creating base system manually"
+                  rm -f kali-${version}.qcow2
+                  virt-builder debian-11 \
+                    --output kali-${version}.qcow2 \
+                    --format qcow2 \
+                    --size 20G \
+                    --root-password password:oneclickvirt \
+                    --hostname kali \
+                    --timezone Asia/Hong_Kong
+                  if [ $? -ne 0 ]; then
+                      echo "Failed to create base system for Kali $version, skipping..."
+                      rm -f kali-${version}.iso kali-${version}.qcow2
+                      continue
+                  fi
+                  echo "Converting Debian base to Kali Linux"
+                  virt-customize -a kali-${version}.qcow2 \
+                    --run-command "echo 'deb http://http.kali.org/kali kali-rolling main non-free contrib' > /etc/apt/sources.list" \
+                    --run-command "echo 'deb-src http://http.kali.org/kali kali-rolling main non-free contrib' >> /etc/apt/sources.list" \
+                    --run-command "wget -q -O - https://archive.kali.org/archive-key.asc | apt-key add" \
+                    --run-command "apt-get update" \
+                    --install "kali-linux-core,kali-desktop-xfce" \
+                    --run-command "apt-get -y dist-upgrade"
               fi
               chmod 644 kali-${version}.qcow2
               echo "Customizing Kali $version image"
@@ -111,7 +164,7 @@ jobs:
                   release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/kali" | jq -r '.id')
                   if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
                       echo "Release 'kali' not found, please create it first"
-                      rm -f kali-${version}.qcow2 kali${version}.qcow2
+                      rm -f kali-${version}.iso kali-${version}.qcow2 kali${version}.qcow2
                       continue
                   fi
                   echo "Found release ID: $release_id"
@@ -125,7 +178,7 @@ jobs:
                           echo "Existing asset deleted successfully."
                       else
                           echo "Failed to delete existing asset for $file. Skipping file upload..."
-                          rm -f kali-${version}.qcow2 kali${version}.qcow2
+                          rm -f kali-${version}.iso kali-${version}.qcow2 kali${version}.qcow2
                           continue
                       fi
                   else
@@ -153,7 +206,9 @@ jobs:
                   fi
               fi
               echo "Cleaning up files for Kali $version"
-              rm -f kali-${version}.qcow2 kali${version}.qcow2
+              rm -f kali-${version}.iso kali-${version}.qcow2 kali${version}.qcow2
+              sudo virsh destroy kali-temp-${version} 2>/dev/null || true
+              sudo virsh undefine kali-temp-${version} 2>/dev/null || true
               echo "=== Completed processing Kali $version ==="
               echo ""
           done
