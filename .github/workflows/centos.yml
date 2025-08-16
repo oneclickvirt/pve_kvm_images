@@ -35,8 +35,8 @@ jobs:
                   declare -A centos_versions
                   centos_versions["9"]="9"
                   centos_versions["8"]="8"
-                  centos_versions["7"]="7"
-                  for version in "9" "8" "7"; do
+                  # centos_versions["7"]="7"
+                  for version in "9" "8"; do
                       echo "=== Processing CentOS $version ==="
                       rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2 centos${version}.qcow2
                       echo "Downloading CentOS $version Cloud Image"
@@ -44,8 +44,8 @@ jobs:
                           download_url="https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
                       elif [ "$version" = "8" ]; then
                           download_url="https://cloud.centos.org/centos/8-stream/x86_64/images/CentOS-Stream-GenericCloud-8-latest.x86_64.qcow2"
-                      elif [ "$version" = "7" ]; then
-                          download_url="https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2"
+                      # elif [ "$version" = "7" ]; then
+                      #     download_url="https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2"
                       fi
                       axel -n 8 -o centos-${version}.qcow2 "$download_url"
                       if [ $? -ne 0 ]; then
