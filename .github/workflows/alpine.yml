@@ -30,7 +30,7 @@ jobs:
           sudo apt-get install -y libguestfs-tools rng-tools curl axel
           sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
           # Install additional tools for image creation
-          sudo apt-get install -y qemu-utils debootstrap
+          sudo apt-get install -y debootstrap
 
       - name: Build Alpine Images
         run: |
