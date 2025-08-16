@@ -27,8 +27,8 @@ jobs:
           export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
           sudo apt-get update
           sudo apt-get install -y curl wget unzip zip jq
-          sudo apt-get install -y libguestfs-tools rng-tools curl axel
-          sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
+          sudo apt-get install -y libguestfs-tools rng-tools curl axel virtinst
+          sudo apt-get install -y libguestfs-tools rng-tools curl axel virtinst --fix-missing
 
       - name: Build Kali Images
         run: |
