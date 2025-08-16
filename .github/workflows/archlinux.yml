@@ -51,6 +51,8 @@ jobs:
               exit 1
           fi
           chmod 644 archlinux.qcow2
+          echo "Resizing Arch Linux image..."
+          qemu-img resize archlinux.qcow2 +1G
           echo "Customizing Arch Linux image"
           virt-customize -a archlinux.qcow2 \
             --smp 2 \
