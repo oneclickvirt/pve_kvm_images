@@ -133,8 +133,7 @@ jobs:
                 --run-command "apk cache clean" \
                 --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
                 --delete "/var/log/*.log" \
-                --delete "/var/cache/apk/*" \
-                --truncate "/etc/machine-id"
+                --delete "/var/cache/apk/*"
               if [ $? -ne 0 ]; then
                   echo "Failed to customize Alpine $version image, skipping..."
                   rm -f alpine-${version}.qcow2
