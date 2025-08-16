@@ -42,39 +42,38 @@ jobs:
               local version=$1
               local base_url="https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/"
               
-              echo "Fetching directory listing for Alpine $version..."
+              echo "Fetching directory listing for Alpine $version..." >&2
               # Get the directory listing and extract timestamps
               timestamps=$(curl -s "$base_url" | grep -o '[0-9]\{8\}_[0-9]\{2\}%3A[0-9]\{2\}' | sort -r | head -10)
               
-              if [ -z "$timestamps" ]; then
-                  echo "No timestamps found, trying alternative method..."
-                  # Try to construct recent timestamps
-                  current_date=$(date +%Y%m%d)
-                  for days_back in {0..7}; do
-                      test_date=$(date -d "$current_date -$days_back days" +%Y%m%d)
-                      for hour in 13 12 11 10 09 08 07 06; do
-                          for minute in 00 30; do
-                              timestamp="${test_date}_${hour}%3A${minute}"
-                              test_url="${base_url}${timestamp}/disk.qcow2"
-                              echo "Testing timestamp: $timestamp"
-                              if curl --head --fail --connect-timeout 5 --max-time 10 "$test_url" >/dev/null 2>&1; then
-                                  echo "$timestamp"
-                                  return 0
-                              fi
-                          done
-                      done
+              if [ -n "$timestamps" ]; then
+                  # Test each timestamp to find a working one
+                  for timestamp in $timestamps; do
+                      test_url="${base_url}${timestamp}/disk.qcow2"
+                      echo "Testing timestamp from listing: $timestamp" >&2
+                      if curl --head --fail --connect-timeout 5 --max-time 10 "$test_url" >/dev/null 2>&1; then
+                          echo "$timestamp"
+                          return 0
+                      fi
                   done
-                  return 1
               fi
               
-              # Test each timestamp to find a working one
-              for timestamp in $timestamps; do
-                  test_url="${base_url}${timestamp}/disk.qcow2"
-                  echo "Testing timestamp: $timestamp"
-                  if curl --head --fail --connect-timeout 5 --max-time 10 "$test_url" >/dev/null 2>&1; then
-                      echo "$timestamp"
-                      return 0
-                  fi
+              echo "No timestamps found from listing, trying alternative method..." >&2
+              # Try to construct recent timestamps
+              current_date=$(date +%Y%m%d)
+              for days_back in {0..7}; do
+                  test_date=$(date -d "$current_date -$days_back days" +%Y%m%d)
+                  for hour in 13 12 11 10 09 08 07 06; do
+                      for minute in 00 30; do
+                          timestamp="${test_date}_${hour}%3A${minute}"
+                          test_url="${base_url}${timestamp}/disk.qcow2"
+                          echo "Testing constructed timestamp: $timestamp" >&2
+                          if curl --head --fail --connect-timeout 5 --max-time 10 "$test_url" >/dev/null 2>&1; then
+                              echo "$timestamp"
+                              return 0
+                          fi
+                      done
+                  done
               done
               
               return 1
@@ -94,11 +93,12 @@ jobs:
               fi
               
               download_url="https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/${timestamp}/disk.qcow2"
+              echo "Found timestamp: $timestamp"
               echo "Download URL: $download_url"
               
               # Download with axel first
               echo "Downloading with axel..."
-              if axel -n 8 -o "$output_file" "$download_url"; then
+              if axel -n 8 -o "$output_file" "$download_url" 2>/dev/null; then
                   if [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
                       echo "Successfully downloaded with axel: $(stat -c %s "$output_file") bytes"
                       return 0
@@ -106,7 +106,7 @@ jobs:
               fi
               
               echo "Axel failed, trying with curl..."
-              if curl -L -o "$output_file" "$download_url"; then
+              if curl -L -o "$output_file" "$download_url" 2>/dev/null; then
                   if [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
                       echo "Successfully downloaded with curl: $(stat -c %s "$output_file") bytes"
                       return 0
