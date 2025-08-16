@@ -52,7 +52,7 @@ jobs:
           fi
           chmod 644 archlinux.qcow2
           echo "Resizing Arch Linux image..."
-          qemu-img resize archlinux.qcow2 +1G
+          qemu-img resize archlinux.qcow2 +2G
           echo "Customizing Arch Linux image"
           virt-customize -a archlinux.qcow2 \
             --smp 2 \
@@ -65,6 +65,9 @@ jobs:
             --run-command "pacman-key --populate archlinux" \
             --run-command "pacman -Sy --noconfirm archlinux-keyring" \
             --run-command "pacman -Syu --noconfirm" \
+            --run-command "pacman -S --noconfirm cloud-guest-utils" \
+            --run-command "growpart /dev/sda 1 || true" \
+            --run-command "resize2fs /dev/sda1" \
             --run-command "pacman -S --noconfirm sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof" \
             --run-command "pacman -Scc --noconfirm" \
             --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
