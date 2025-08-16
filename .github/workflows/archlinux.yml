@@ -59,6 +59,9 @@ jobs:
             --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
             --run-command "grub-mkconfig -o /boot/grub/grub.cfg" \
             --run-command "systemctl enable serial-getty@ttyS1.service" \
+            --run-command "pacman-key --init" \
+            --run-command "pacman-key --populate archlinux" \
+            --run-command "pacman -Sy --noconfirm archlinux-keyring" \
             --run-command "pacman -Syu --noconfirm" \
             --run-command "pacman -S --noconfirm sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof" \
             --run-command "pacman -Scc --noconfirm" \
