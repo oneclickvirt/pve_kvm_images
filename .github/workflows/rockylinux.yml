@@ -32,16 +32,12 @@ jobs:
 
       - name: Build RockyLinux Images
         run: |
-          # 定义版本信息 (从新到旧)
           declare -A rockylinux_versions
           rockylinux_versions["9"]="9"
           rockylinux_versions["8"]="8"
-          # 按版本顺序处理 (从新到旧)
           for version in "9" "8"; do
               echo "=== Processing RockyLinux $version ==="
-              # 清理之前的文件
               rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
-              # 下载镜像
               echo "Downloading RockyLinux $version Cloud Image"
               download_url="https://download.rockylinux.org/pub/rocky/${version}/images/x86_64/Rocky-${version}-GenericCloud-Base.latest.x86_64.qcow2"
               axel -n 8 -o rockylinux-${version}.qcow2 "$download_url"
@@ -59,7 +55,6 @@ jobs:
                   continue
               fi
               chmod 644 rockylinux-${version}.qcow2
-              # 自定义镜像
               echo "Customizing RockyLinux $version image"
               virt-customize -a rockylinux-${version}.qcow2 \
                 --smp 2 \
@@ -69,6 +64,7 @@ jobs:
                 --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg" \
                 --run-command "systemctl enable serial-getty@ttyS1.service" \
                 --update \
+                --run-command "dnf install -y epel-release" \
                 --install "sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,net-tools,iputils,nano,screen,less,vim,bzip2,lldpad,mtr,htop,bind-utils,zstd,cronie,lsof" \
                 --run-command "dnf -y autoremove && dnf -y clean all" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
@@ -81,7 +77,6 @@ jobs:
                   continue
               fi
               echo "Configuring SSH and root access for RockyLinux $version..."
-              # SSH配置 - 启用密码认证和root登录
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
@@ -92,18 +87,14 @@ jobs:
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
               echo "Configuring qemu-guest-agent for RockyLinux $version..."
-              # qemu-guest-agent配置
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
               echo "Setting root password and MOTD for RockyLinux $version..."
-              # 设置root密码
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
-              # 设置MOTD
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
-              # 压缩镜像
               echo "Compressing RockyLinux $version image"
               virt-sparsify --compress rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2
               if [ $? -ne 0 ]; then
@@ -113,7 +104,6 @@ jobs:
               fi
               mv rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
               ls -lh rockylinux${version}.qcow2
-              # 上传镜像
               file="rockylinux${version}.qcow2"
               if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
                   echo "Processing file: $file"
@@ -161,7 +151,6 @@ jobs:
                       echo "File size: $file_size bytes"
                   fi
               fi
-              # 清理当前版本的文件
               echo "Cleaning up files for RockyLinux $version"
               rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2
               echo "=== Completed processing RockyLinux $version ==="
