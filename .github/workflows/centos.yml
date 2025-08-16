@@ -70,6 +70,12 @@ jobs:
                           package_manager="dnf"
                           grub_config_path="/boot/grub2/grub.cfg"
                       fi
+                      if [ "$version" != "9" ]; then
+                        virt-customize -a centos-${version}.qcow2 \
+                            --run-command "curl -Lk https://gitee.com/SuperManito/LinuxMirrors/raw/main/ChangeMirrors.sh -o /root/ChangeMirrors.sh"
+                        virt-customize -a centos-${version}.qcow2 \
+                            --run-command "chmod +x /root/ChangeMirrors.sh && bash /root/ChangeMirrors.sh --source mirrors.tuna.tsinghua.edu.cn --web-protocol http --intranet false --backup true --updata-software false --clean-cache false --ignore-backup-tips"
+                      fi
                       virt-customize -a centos-${version}.qcow2 \
                         --smp 2 \
                         --timezone Asia/Hong_Kong \
