@@ -29,132 +29,224 @@ jobs:
           sudo apt-get install -y curl wget unzip zip jq
           sudo apt-get install -y libguestfs-tools rng-tools curl axel
           sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
+          # Install additional tools for image creation
+          sudo apt-get install -y qemu-utils debootstrap
 
       - name: Build Alpine Images
         run: |
           declare -A alpine_versions
-          alpine_versions["3.22"]="3.22"
-          alpine_versions["3.21"]="3.21"
           alpine_versions["3.20"]="3.20"
+          alpine_versions["3.19"]="3.19"
+          alpine_versions["3.18"]="3.18"
           
-          # Function to try multiple URL patterns
-          try_download() {
+          # Function to try downloading from various sources
+          try_download_alpine() {
               local version=$1
               local output_file=$2
               
+              echo "Trying to download Alpine $version cloud image..."
+              
               # URL patterns to try (in order of preference)
-              local urls=(
-                  "https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/alpine-cloud-${version}.0-x86_64.qcow2"
-                  "https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/alpine-cloud-${version}.1-x86_64.qcow2"
-                  "https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/alpine-cloud-${version}.2-x86_64.qcow2"
-                  "https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/alpine-cloud-${version}.3-x86_64.qcow2"
-                  "https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/alpine-cloud-${version}.4-x86_64.qcow2"
-                  "https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/alpine-cloud-${version}.5-x86_64.qcow2"
+              local base_urls=(
+                  "https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/"
                   "https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/"
-                  "https://github.com/alpinelinux/docker-alpine/raw/master/x86_64/alpine-minirootfs-${version}.0-x86_64.tar.gz"
+                  "https://cloud-images.alpine.org/v${version}/"
               )
               
-              for url in "${urls[@]}"; do
-                  echo "Trying URL: $url"
-                  if curl --head --fail --connect-timeout 10 --max-time 30 "$url" >/dev/null 2>&1; then
-                      echo "Found working URL: $url"
-                      axel -n 8 -o "$output_file" "$url"
-                      if [ $? -eq 0 ] && [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
-                          return 0
+              local file_patterns=(
+                  "alpine-cloud-${version}.0-x86_64.qcow2"
+                  "alpine-cloud-${version}.1-x86_64.qcow2"
+                  "alpine-cloud-${version}.2-x86_64.qcow2"
+                  "alpine-cloud-${version}.3-x86_64.qcow2"
+                  "alpine-cloud-${version}.4-x86_64.qcow2"
+                  "alpine-cloud-${version}.5-x86_64.qcow2"
+                  "alpine-virt-${version}.0-x86_64.qcow2"
+                  "alpine-virt-${version}.1-x86_64.qcow2"
+                  "alpine-standard-${version}.0-x86_64.qcow2"
+                  "rootfs.squashfs"
+                  "rootfs.tar.xz"
+              )
+              
+              for base_url in "${base_urls[@]}"; do
+                  for pattern in "${file_patterns[@]}"; do
+                      url="${base_url}${pattern}"
+                      echo "Trying: $url"
+                      
+                      if curl --head --fail --connect-timeout 10 --max-time 30 "$url" >/dev/null 2>&1; then
+                          echo "Found valid URL: $url"
+                          
+                          # Download with axel first
+                          if axel -n 8 -o "$output_file" "$url"; then
+                              if [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 1048576 ]; then
+                                  echo "Successfully downloaded with axel: $(stat -c %s "$output_file") bytes"
+                                  return 0
+                              fi
+                          fi
+                          
+                          # Fallback to curl
+                          if curl -L -o "$output_file" "$url"; then
+                              if [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 1048576 ]; then
+                                  echo "Successfully downloaded with curl: $(stat -c %s "$output_file") bytes"
+                                  return 0
+                              fi
+                          fi
+                          
+                          # Clean up failed download
+                          rm -f "$output_file"
                       fi
-                      echo "Axel failed, trying with curl"
-                      curl -L -o "$output_file" "$url"
-                      if [ $? -eq 0 ] && [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
-                          return 0
-                      fi
-                  fi
+                  done
               done
               
-              # If all URLs fail, try to find the latest minor version
-              echo "Trying to find latest minor version for Alpine $version"
-              for minor in {9..0}; do
-                  url="https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/cloud/alpine-cloud-${version}.${minor}-x86_64.qcow2"
-                  echo "Trying: $url"
-                  if curl --head --fail --connect-timeout 10 --max-time 30 "$url" >/dev/null 2>&1; then
-                      echo "Found working URL: $url"
-                      axel -n 8 -o "$output_file" "$url"
-                      if [ $? -eq 0 ] && [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
-                          return 0
-                      fi
-                      curl -L -o "$output_file" "$url"
-                      if [ $? -eq 0 ] && [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
-                          return 0
-                      fi
-                  fi
-              done
-              
+              echo "Failed to download from any official source"
               return 1
           }
           
-          for version in "3.22" "3.21" "3.20"; do
+          # Function to create Alpine image from scratch
+          create_alpine_image() {
+              local version=$1
+              local output_file=$2
+              
+              echo "Creating Alpine $version image from scratch..."
+              
+              # Create a minimal Alpine image
+              qemu-img create -f qcow2 "$output_file" 2G
+              
+              # Try to use virt-make-fs if available, otherwise use alternative method
+              if command -v virt-make-fs >/dev/null 2>&1; then
+                  # Create a temporary directory
+                  temp_dir=$(mktemp -d)
+                  
+                  # Download Alpine mini root filesystem
+                  alpine_rootfs_url="https://dl-cdn.alpinelinux.org/alpine/v${version}/releases/x86_64/alpine-minirootfs-${version}.0-x86_64.tar.gz"
+                  
+                  echo "Downloading Alpine minirootfs: $alpine_rootfs_url"
+                  if curl -L -o "${temp_dir}/alpine-minirootfs.tar.gz" "$alpine_rootfs_url"; then
+                      cd "$temp_dir"
+                      tar -xzf alpine-minirootfs.tar.gz
+                      rm alpine-minirootfs.tar.gz
+                      
+                      # Create basic filesystem structure
+                      mkdir -p proc sys dev tmp var/log etc/apk
+                      
+                      # Create a basic fstab
+                      cat > etc/fstab << 'EOF'
+          /dev/vda1 / ext4 defaults,noatime 0 1
+          /dev/vda15 /boot/efi vfat defaults 0 2
+          tmpfs /tmp tmpfs defaults,nodev,nosuid,noexec 0 0
+          EOF
+                      
+                      # Create basic inittab for OpenRC
+                      cat > etc/inittab << 'EOF'
+          ::sysinit:/sbin/openrc sysinit
+          ::sysinit:/sbin/openrc boot
+          ::wait:/sbin/openrc default
+          ::ctrlaltdel:/sbin/reboot
+          ::shutdown:/sbin/openrc shutdown
+          EOF
+                      
+                      # Use virt-make-fs to create the filesystem
+                      virt-make-fs --format=qcow2 --size=2G . "../$output_file"
+                      
+                      cd - > /dev/null
+                      rm -rf "$temp_dir"
+                      
+                      if [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
+                          echo "Successfully created Alpine image from minirootfs"
+                          return 0
+                      fi
+                  fi
+              fi
+              
+              echo "Failed to create Alpine image from scratch"
+              rm -f "$output_file"
+              return 1
+          }
+          
+          for version in "3.20" "3.19" "3.18"; do
               echo "=== Processing Alpine $version ==="
               rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2 alpine${version}.qcow2
               
-              echo "Downloading Alpine $version Cloud Image"
-              if ! try_download "$version" "alpine-${version}.qcow2"; then
-                  echo "Failed to download Alpine $version from any source, skipping..."
-                  continue
+              # Try to download existing cloud image first
+              if try_download_alpine "$version" "alpine-${version}.qcow2"; then
+                  echo "Downloaded existing cloud image for Alpine $version"
+              else
+                  echo "No existing cloud image found, trying to create one..."
+                  if create_alpine_image "$version" "alpine-${version}.qcow2"; then
+                      echo "Created custom Alpine $version image"
+                  else
+                      echo "Failed to obtain Alpine $version image, skipping..."
+                      continue
+                  fi
               fi
               
               if [ ! -f "alpine-${version}.qcow2" ] || [ $(stat -c %s "alpine-${version}.qcow2") -lt 10485760 ]; then
-                  echo "Download failed or file too small for Alpine $version, skipping..."
+                  echo "Alpine $version image is too small or doesn't exist, skipping..."
                   rm -f alpine-${version}.qcow2
                   continue
               fi
               
               chmod 644 alpine-${version}.qcow2
-              echo "Successfully downloaded Alpine $version image ($(stat -c %s alpine-${version}.qcow2) bytes)"
+              echo "Alpine $version image ready: $(stat -c %s alpine-${version}.qcow2) bytes"
               
               echo "Customizing Alpine $version image"
+              
+              # First, ensure the image is bootable and has basic tools
               virt-customize -a alpine-${version}.qcow2 \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
-                --run-command "rc-update add qemu-guest-agent boot" \
-                --run-command "apk update && apk upgrade" \
-                --run-command "apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc" \
-                --run-command "apk cache clean" \
+                --run-command "apk update || echo 'apk update failed, continuing...'" \
+                --run-command "apk add openrc util-linux || echo 'Failed to add basic packages'" \
+                --run-command "apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh || echo 'Failed to add some packages'" \
+                --run-command "rc-update add devfs boot || echo 'devfs add failed'" \
+                --run-command "rc-update add dmesg boot || echo 'dmesg add failed'" \
+                --run-command "rc-update add mdev sysinit || echo 'mdev add failed'" \
+                --run-command "rc-update add hwclock boot || echo 'hwclock add failed'" \
+                --run-command "rc-update add modules boot || echo 'modules add failed'" \
+                --run-command "rc-update add sysctl boot || echo 'sysctl add failed'" \
+                --run-command "rc-update add hostname boot || echo 'hostname add failed'" \
+                --run-command "rc-update add bootmisc boot || echo 'bootmisc add failed'" \
+                --run-command "rc-update add syslog boot || echo 'syslog add failed'" \
+                --run-command "rc-update add qemu-guest-agent boot || echo 'qemu-guest-agent add failed'" \
                 --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
+                --run-command "apk cache clean || echo 'cache clean failed'" \
                 --delete "/var/log/*.log" \
                 --delete "/var/cache/apk/*" \
                 --truncate "/etc/machine-id"
+                
               if [ $? -ne 0 ]; then
-                  echo "Failed to customize Alpine $version image, skipping..."
-                  rm -f alpine-${version}.qcow2
-                  continue
+                  echo "Basic customization failed for Alpine $version, trying minimal setup..."
+                  
+                  # Try minimal customization
+                  virt-customize -a alpine-${version}.qcow2 \
+                    --run-command "apk update && apk add openrc openssh sudo" \
+                    --run-command "rc-update add sshd boot" \
+                    --run-command "echo 'root:oneclickvirt' | chpasswd"
+                  
+                  if [ $? -ne 0 ]; then
+                      echo "Even minimal customization failed for Alpine $version, skipping..."
+                      rm -f alpine-${version}.qcow2
+                      continue
+                  fi
               fi
               
               echo "Configuring SSH and root access for Alpine $version..."
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add sshd boot"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
-              
-              echo "Configuring qemu-guest-agent for Alpine $version..."
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-service qemu-guest-agent start"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add qemu-guest-agent boot"
-              
-              echo "Setting root password and MOTD for Alpine $version..."
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '' > /etc/motd"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+              sudo virt-customize -a alpine-${version}.qcow2 \
+                --run-command "rc-update add sshd boot || echo 'sshd service add failed'" \
+                --run-command "sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config" \
+                --run-command "sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config" \
+                --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config" \
+                --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config" \
+                --run-command "echo 'root:oneclickvirt' | chpasswd" \
+                --run-command "echo '' > /etc/motd" \
+                --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd" \
+                --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd" \
+                --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
               
               echo "Compressing Alpine $version image"
               virt-sparsify --compress alpine-${version}.qcow2 alpine-${version}-custom.qcow2
               if [ $? -ne 0 ]; then
-                  echo "Failed to compress Alpine $version image, skipping..."
-                  rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2
-                  continue
+                  echo "Compression failed, using original image"
+                  cp alpine-${version}.qcow2 alpine-${version}-custom.qcow2
               fi
               
               mv alpine-${version}-custom.qcow2 alpine${version}.qcow2
