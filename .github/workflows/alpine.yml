@@ -122,7 +122,7 @@ jobs:
                 --run-command "echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent" \
                 --run-command "echo 'name=\"QEMU Guest Agent\"' >> /etc/init.d/qemu-guest-agent" \
                 --run-command "echo 'command=\"/usr/bin/qemu-ga\"' >> /etc/init.d/qemu-guest-agent" \
-                --run-command \"echo 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent\" \
+                --run-command "echo 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent" \
                 --run-command "echo 'pidfile=\"/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent" \
                 --run-command "echo 'depend() {' >> /etc/init.d/qemu-guest-agent" \
                 --run-command "echo '    need localmount' >> /etc/init.d/qemu-guest-agent" \
