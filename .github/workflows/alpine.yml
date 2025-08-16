@@ -42,7 +42,6 @@ jobs:
               echo "Fetching directory listing for Alpine $version..." >&2
               timestamps=$(curl -s "$base_url" | grep -o '[0-9]\{8\}_[0-9]\{2\}%3A[0-9]\{2\}' | sort -r | head -10)
               if [ -n "$timestamps" ]; then
-                  # Test each timestamp to find a working one
                   for timestamp in $timestamps; do
                       test_url="${base_url}${timestamp}/disk.qcow2"
                       echo "Testing timestamp from listing: $timestamp" >&2
@@ -75,7 +74,6 @@ jobs:
               local output_file=$2
               echo "Getting latest timestamp for Alpine $version..."
               timestamp=$(get_latest_timestamp "$version")
-              
               if [ $? -ne 0 ] || [ -z "$timestamp" ]; then
                   echo "Failed to get valid timestamp for Alpine $version"
                   return 1
@@ -119,9 +117,11 @@ jobs:
               virt-customize -a alpine-${version}.qcow2 \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
-                --run-command "rc-update add qemu-guest-agent boot" \
                 --run-command "apk update && apk upgrade" \
                 --run-command "apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc" \
+                --run-command "cat > /etc/init.d/qemu-guest-agent <<'EOF'\n#!/sbin/openrc-run\nname=\"QEMU Guest Agent\"\ncommand=\"/usr/bin/qemu-ga\"\ncommand_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"\npidfile=\"/run/qemu-guest-agent.pid\"\ndepend() {\n    need localmount\n    after bootmisc\n}\nEOF" \
+                --run-command "chmod +x /etc/init.d/qemu-guest-agent" \
+                --run-command "rc-update add qemu-guest-agent boot" \
                 --run-command "apk cache clean" \
                 --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
                 --delete "/var/log/*.log" \
