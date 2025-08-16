@@ -119,7 +119,15 @@ jobs:
                 --timezone Asia/Hong_Kong \
                 --run-command "apk update && apk upgrade" \
                 --run-command "apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc" \
-                --run-command "cat > /etc/init.d/qemu-guest-agent <<'EOF'\n#!/sbin/openrc-run\nname=\"QEMU Guest Agent\"\ncommand=\"/usr/bin/qemu-ga\"\ncommand_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"\npidfile=\"/run/qemu-guest-agent.pid\"\ndepend() {\n    need localmount\n    after bootmisc\n}\nEOF" \
+                --run-command "echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent" \
+                --run-command "echo 'name=\"QEMU Guest Agent\"' >> /etc/init.d/qemu-guest-agent" \
+                --run-command "echo 'command=\"/usr/bin/qemu-ga\"' >> /etc/init.d/qemu-guest-agent" \
+                --run-command \"echo 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent\" \
+                --run-command "echo 'pidfile=\"/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent" \
+                --run-command "echo 'depend() {' >> /etc/init.d/qemu-guest-agent" \
+                --run-command "echo '    need localmount' >> /etc/init.d/qemu-guest-agent" \
+                --run-command "echo '    after bootmisc' >> /etc/init.d/qemu-guest-agent" \
+                --run-command "echo '}' >> /etc/init.d/qemu-guest-agent" \
                 --run-command "chmod +x /etc/init.d/qemu-guest-agent" \
                 --run-command "rc-update add qemu-guest-agent boot" \
                 --run-command "apk cache clean" \
