@@ -36,6 +36,7 @@ jobs:
           alpine_versions["3.22"]="3.22"
           alpine_versions["3.21"]="3.21"
           alpine_versions["3.20"]="3.20"
+          
           get_latest_timestamp() {
               local version=$1
               local base_url="https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/"
@@ -69,6 +70,7 @@ jobs:
               done
               return 1
           }
+          
           download_alpine_image() {
               local version=$1
               local output_file=$2
@@ -99,20 +101,25 @@ jobs:
               rm -f "$output_file"
               return 1
           }
+          
           for version in "3.22" "3.21" "3.20"; do
               echo "=== Processing Alpine $version ==="
               rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2 alpine${version}.qcow2
+              
               echo "Downloading Alpine $version Cloud Image"
               if ! download_alpine_image "$version" "alpine-${version}.qcow2"; then
                   echo "Failed to download Alpine $version, skipping..."
                   continue
               fi
+              
               if [ ! -f "alpine-${version}.qcow2" ] || [ $(stat -c %s "alpine-${version}.qcow2") -lt 10485760 ]; then
                   echo "Download failed or file too small for Alpine $version, skipping..."
                   rm -f alpine-${version}.qcow2
                   continue
               fi
+              
               chmod 644 alpine-${version}.qcow2
+              
               echo "Customizing Alpine $version image"
               virt-customize -a alpine-${version}.qcow2 \
                 --smp 2 \
@@ -134,11 +141,13 @@ jobs:
                 --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
                 --delete "/var/log/*.log" \
                 --delete "/var/cache/apk/*"
+              
               if [ $? -ne 0 ]; then
                   echo "Failed to customize Alpine $version image, skipping..."
                   rm -f alpine-${version}.qcow2
                   continue
               fi
+              
               echo "Configuring SSH and root access for Alpine $version..."
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add sshd boot"
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
@@ -148,15 +157,18 @@ jobs:
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
+              
               echo "Configuring qemu-guest-agent for Alpine $version..."
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-service qemu-guest-agent start"
-              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add qemu-guest-agent boot"
+              # 修复：只添加到开机启动，不在构建时启动服务
+              sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add qemu-guest-agent boot || true"
+              
               echo "Setting root password and MOTD for Alpine $version..."
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '' > /etc/motd"
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
               sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+              
               echo "Compressing Alpine $version image"
               virt-sparsify --compress alpine-${version}.qcow2 alpine-${version}-custom.qcow2
               if [ $? -ne 0 ]; then
@@ -164,20 +176,26 @@ jobs:
                   rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2
                   continue
               fi
+              
               mv alpine-${version}-custom.qcow2 alpine${version}.qcow2
               ls -lh alpine${version}.qcow2
+              
               file="alpine${version}.qcow2"
               if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
                   echo "Processing file: $file"
+                  
                   release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/alpine" | jq -r '.id')
                   if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
                       echo "Release 'alpine' not found, please create it first"
                       rm -f alpine-${version}.qcow2 alpine${version}.qcow2
                       continue
                   fi
+                  
                   echo "Found release ID: $release_id"
+                  
                   echo "Checking if $file already exists in release..."
                   existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
+                  
                   if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
                       echo "Asset $file already exists in release, deleting existing asset..."
                       delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
@@ -192,11 +210,13 @@ jobs:
                   else
                       echo "No existing $file file found in release."
                   fi
+                  
                   echo "Uploading $file to release..."
                   upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                     -H "Content-Type: application/octet-stream" \
                     -T "$file" \
                     "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
+                  
                   echo "Upload response: $upload_response"
                   if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
                       echo "Successfully uploaded $file"
@@ -213,6 +233,7 @@ jobs:
                       echo "File size: $file_size bytes"
                   fi
               fi
+              
               echo "Cleaning up files for Alpine $version"
               rm -f alpine-${version}.qcow2 alpine${version}.qcow2
               echo "=== Completed processing Alpine $version ==="
