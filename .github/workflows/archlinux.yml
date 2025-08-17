@@ -61,15 +61,18 @@ jobs:
           
           # 使用virt-resize来正确调整分区和文件系统大小
           echo "Creating expanded image with proper partition resizing..."
-          qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
-          virt-resize --expand /dev/sda1 archlinux.qcow2 archlinux-expanded.qcow2
+          qemu-img create -f qcow2 archlinux-expanded.qcow2 8G
+          # 扩展根分区 /dev/sda3 (btrfs文件系统)
+          virt-resize --expand /dev/sda3 archlinux.qcow2 archlinux-expanded.qcow2
           if [ $? -ne 0 ]; then
               echo "virt-resize failed, trying alternative approach..."
-              # 如果virt-resize失败，直接使用原镜像继续
+              # 如果virt-resize失败，直接使用原镜像继续，但增大镜像文件
               cp archlinux.qcow2 archlinux-expanded.qcow2
+              qemu-img resize archlinux-expanded.qcow2 +4G
           fi
           
           echo "Customizing Arch Linux image"
+          # 先进行系统更新，减少后续安装包的数量
           virt-customize -a archlinux-expanded.qcow2 \
             --smp 2 \
             --timezone Asia/Hong_Kong \
@@ -81,7 +84,18 @@ jobs:
             --run-command "pacman-key --populate archlinux" \
             --run-command "pacman -Sy --noconfirm archlinux-keyring" \
             --run-command "pacman -Syu --noconfirm" \
-            --run-command "pacman -S --noconfirm cloud-guest-utils" \
+            --run-command "pacman -S --noconfirm cloud-guest-utils"
+          
+          if [ $? -ne 0 ]; then
+              echo "Failed to update Arch Linux system, exiting..."
+              rm -f archlinux.qcow2 archlinux-expanded.qcow2
+              exit 1
+          fi
+          
+          # 清理后再安装其他软件包
+          echo "Installing additional packages..."
+          virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "pacman -Scc --noconfirm" \
             --run-command "pacman -S --noconfirm sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof" \
             --run-command "pacman -Scc --noconfirm" \
             --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
