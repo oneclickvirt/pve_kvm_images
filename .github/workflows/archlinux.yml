@@ -83,9 +83,9 @@ jobs:
           fi
           echo "Installing additional packages..."
           virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "pacman -Scc --noconfirm" \
+            --run-command "echo -e 'y\ny' | pacman -Scc" \
             --run-command "pacman -S --noconfirm sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof" \
-            --run-command "pacman -Scc --noconfirm" \
+            --run-command "echo -e 'y\ny' | pacman -Scc" \
             --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
             --delete "/var/log/*.log" \
             --delete "/var/cache/pacman/pkg/*"
@@ -105,8 +105,7 @@ jobs:
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
           echo "Configuring qemu-guest-agent for Arch Linux..."
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "systemctl start qemu-ga"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "systemctl enable qemu-ga"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "systemctl enable qemu-guest-agent"
           echo "Setting root password and MOTD for Arch Linux..."
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo '' > /etc/motd"
