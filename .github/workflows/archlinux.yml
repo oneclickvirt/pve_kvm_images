@@ -89,8 +89,9 @@ jobs:
           echo "Customizing Arch Linux image - Phase 3: Initialize Package Manager"
           virt-customize -a archlinux-expanded.qcow2 \
             --run-command "pacman-key --init" \
-            --run-command "sleep 10"
-            # --run-command "sync"
+            --run-command "sleep 10" \
+            --run-command "sudo lsof | grep /sysroot/dev | awk '{print $2}' | xargs sudo kill -9" \
+            --run-command "sync"
           if [ $? -ne 0 ]; then
               echo "Failed to initialize pacman keys, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
