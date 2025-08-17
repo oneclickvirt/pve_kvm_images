@@ -63,19 +63,32 @@ jobs:
               cp archlinux.qcow2 archlinux-expanded.qcow2
               qemu-img resize archlinux-expanded.qcow2 +2G
           fi
-          echo "Customizing Arch Linux image"
+          echo "Customizing Arch Linux image - Phase 1: System Setup"
           virt-customize -a archlinux-expanded.qcow2 \
             --smp 2 \
             --timezone Asia/Hong_Kong \
             --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
             --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
             --run-command "grub-mkconfig -o /boot/grub/grub.cfg" \
-            --run-command "systemctl enable serial-getty@ttyS1.service" \
+            --run-command "systemctl enable serial-getty@ttyS1.service"
+          if [ $? -ne 0 ]; then
+              echo "Failed to setup Arch Linux system, exiting..."
+              rm -f archlinux.qcow2 archlinux-expanded.qcow2
+              exit 1
+          fi
+          echo "Customizing Arch Linux image - Phase 2: Package Management"
+          virt-customize -a archlinux-expanded.qcow2 \
             --run-command "pacman-key --init" \
             --run-command "pacman-key --populate archlinux" \
-            --run-command "pacman -Sy --noconfirm archlinux-keyring" \
-            --run-command "pacman -Syu --noconfirm" \
-            --run-command "pacman -S --noconfirm cloud-guest-utils"
+            --run-command "pacman -Sy --noconfirm archlinux-keyring"
+          if [ $? -ne 0 ]; then
+              echo "Failed to initialize pacman keys, exiting..."
+              rm -f archlinux.qcow2 archlinux-expanded.qcow2
+              exit 1
+          fi
+          echo "Customizing Arch Linux image - Phase 3: System Update"
+          virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "pacman -Syu --noconfirm"
           if [ $? -ne 0 ]; then
               echo "Failed to update Arch Linux system, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
@@ -83,9 +96,15 @@ jobs:
           fi
           echo "Installing additional packages..."
           virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "echo -e 'y\ny' | pacman -Scc" \
-            --run-command "pacman -S --noconfirm sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof" \
-            --run-command "echo -e 'y\ny' | pacman -Scc" \
+            --run-command "pacman -S --noconfirm cloud-guest-utils sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof"
+          if [ $? -ne 0 ]; then
+              echo "Failed to install additional packages, exiting..."
+              rm -f archlinux.qcow2 archlinux-expanded.qcow2
+              exit 1
+          fi
+          echo "Final system cleanup..."
+          virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "yes | pacman -Scc || true" \
             --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
             --delete "/var/log/*.log" \
             --delete "/var/cache/pacman/pkg/*"
