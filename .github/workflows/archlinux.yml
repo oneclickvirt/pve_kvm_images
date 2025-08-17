@@ -78,52 +78,53 @@ jobs:
           echo "Customizing Arch Linux image - Phase 2: GRUB and Services"
           virt-customize -a archlinux-expanded.qcow2 \
             --run-command "grub-mkconfig -o /boot/grub/grub.cfg" \
-            --run-command "systemctl enable serial-getty@ttyS1.service"
+            --run-command "systemctl enable serial-getty@ttyS1.service" \
+            --run-command "sync"
           if [ $? -ne 0 ]; then
               echo "Failed to configure GRUB and services, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
-          
+          sleep 5
           echo "Customizing Arch Linux image - Phase 3: Initialize Package Manager"
-          virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "pacman-key --init"
+          virt-customize -a -v -x archlinux-expanded.qcow2 \
+            --run-command "pacman-key --init" \
+            --run-command "sync"
           if [ $? -ne 0 ]; then
               echo "Failed to initialize pacman keys, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
-          virt-sysprep -a archlinux-expanded.qcow2
-          
+          sleep 10
           echo "Customizing Arch Linux image - Phase 4: Populate Keys"
-          virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "pacman-key --populate archlinux"
+          virt-customize -a -v -x archlinux-expanded.qcow2 \
+            --run-command "pacman-key --populate archlinux" \
+            --run-command "sync"
           if [ $? -ne 0 ]; then
               echo "Failed to populate pacman keys, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
-          virt-sysprep -a archlinux-expanded.qcow2
           
           echo "Customizing Arch Linux image - Phase 5: Update Keyring"
           virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "pacman -Sy --noconfirm archlinux-keyring"
+            --run-command "pacman -Sy --noconfirm archlinux-keyring" \
+            --run-command "sync"
           if [ $? -ne 0 ]; then
               echo "Failed to update keyring, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
-          virt-sysprep -a archlinux-expanded.qcow2
           
           echo "Customizing Arch Linux image - Phase 6: System Update"
           virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "pacman -Syu --noconfirm"
+            --run-command "pacman -Syu --noconfirm" \
+            --run-command "sync"
           if [ $? -ne 0 ]; then
               echo "Failed to update system, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
-          virt-sysprep -a archlinux-expanded.qcow2
           
           echo "Installing essential packages..."
           virt-customize -a archlinux-expanded.qcow2 \
