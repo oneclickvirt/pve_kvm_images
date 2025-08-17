@@ -89,7 +89,10 @@ jobs:
           echo "Customizing Arch Linux image - Phase 3: Initialize Package Manager"
           virt-customize -a archlinux-expanded.qcow2 \
             --run-command "pacman-key --init" \
-            --run-command "gpgconf --kill all " \
+            --run-command "gpgconf --kill all || true" \
+            --run-command "pkill -9 -x dirmngr || true" \
+            --run-command "pkill -9 -x gpg-agent || true" \
+            --run-command "pkill -9 -x sleep || true" \
             --run-command "sync"
           if [ $? -ne 0 ]; then
               echo "Failed to initialize pacman keys, exiting..."
