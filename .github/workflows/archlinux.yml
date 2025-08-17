@@ -85,18 +85,18 @@ jobs:
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
-          sleep 3
-          # echo "Customizing Arch Linux image - Phase 3: Initialize Package Manager"
-          # virt-customize -a archlinux-expanded.qcow2 \
-          #   --run-command "pacman-key --init" \
-          #   --run-command "sleep 3" \
-          #   --run-command "sync"
-          # if [ $? -ne 0 ]; then
-          #     echo "Failed to initialize pacman keys, exiting..."
-          #     rm -f archlinux.qcow2 archlinux-expanded.qcow2
-          #     exit 1
-          # fi
-          # sleep 5
+          sleep 5
+          echo "Customizing Arch Linux image - Phase 3: Initialize Package Manager"
+          virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "pacman-key --init" \
+            --run-command "sleep 10"
+            # --run-command "sync"
+          if [ $? -ne 0 ]; then
+              echo "Failed to initialize pacman keys, exiting..."
+              rm -f archlinux.qcow2 archlinux-expanded.qcow2
+              exit 1
+          fi
+          sleep 5
           echo "Customizing Arch Linux image - Phase 4: Populate Keys"
           virt-customize -a archlinux-expanded.qcow2 \
             --run-command "pacman-key --populate archlinux" \
