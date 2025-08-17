@@ -14,8 +14,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y curl wget unzip zip jq p7zip-full
-          sudo apt-get install -y libguestfs-tools rng-tools
-          sudo apt-get install -y libguestfs-tools rng-tools --fix-missing
+          sudo apt-get install -y libguestfs-tools rng-tools qemu-utils
+          sudo apt-get install -y libguestfs-tools rng-tools qemu-utils --fix-missing
 
       - name: Build Kali Images
         run: |
@@ -34,20 +34,86 @@ jobs:
               axel -n 4 -o kali-linux-${version}-vmware-amd64.7z "$vmware_url" || \
               curl -L -o kali-linux-${version}-vmware-amd64.7z "$vmware_url"
               
-              if [ -f "kali-linux-${version}-vmware-amd64.7z" ] && [ $(stat -c %s "kali-linux-${version}-vmware-amd64.7z") -gt 104857600 ]; then
+              if [ -f "kali-linux-${version}-vmware-amd64.7z" ] && [ $(stat -c%s "kali-linux-${version}-vmware-amd64.7z") -gt 104857600 ]; then
                   echo "Extracting VMware image..."
                   7z x kali-linux-${version}-vmware-amd64.7z
                   
-                  # 查找 VMDK 文件
-                  vmdk_file=$(find . -name "*.vmdk" | head -1)
-                  if [ -n "$vmdk_file" ]; then
-                      echo "Converting VMDK to qcow2: $vmdk_file"
-                      qemu-img convert -f vmdk -O qcow2 "$vmdk_file" kali-${version}.qcow2
+                  # 列出解压后的内容进行调试
+                  echo "Contents after extraction:"
+                  find . -name "*.vmdk" -o -name "*.vmwarevm" | head -10
+                  
+                  # 查找 vmwarevm 目录
+                  vmware_dir=$(find . -name "*.vmwarevm" -type d | head -1)
+                  if [ -n "$vmware_dir" ]; then
+                      echo "Found VMware directory: $vmware_dir"
+                      ls -la "$vmware_dir"
                       
-                      if [ -f "kali-${version}.qcow2" ]; then
-                          echo "Successfully converted VMware image to qcow2"
-                          # 清理解压的文件
-                          rm -rf Kali-Linux-*/ kali-linux-${version}-vmware-amd64.7z
+                      # 查找主 VMDK 文件（通常不带 s001, s002 等后缀）
+                      main_vmdk=$(find "$vmware_dir" -name "*.vmdk" | grep -v -- "-s[0-9]" | head -1)
+                      
+                      if [ -z "$main_vmdk" ]; then
+                          # 如果没有主文件，查找第一个分片文件
+                          main_vmdk=$(find "$vmware_dir" -name "*-s001.vmdk" | head -1)
+                          if [ -z "$main_vmdk" ]; then
+                              # 最后尝试任意 VMDK 文件
+                              main_vmdk=$(find "$vmware_dir" -name "*.vmdk" | head -1)
+                          fi
+                      fi
+                      
+                      if [ -n "$main_vmdk" ]; then
+                          echo "Using VMDK file: $main_vmdk"
+                          
+                          # 检查是否是分片文件
+                          if ls "$vmware_dir"/*-s[0-9]*.vmdk 1> /dev/null 2>&1; then
+                              echo "Detected split VMDK files, attempting conversion directly..."
+                              # 对于分片 VMDK，qemu-img 通常能自动处理，只需指向主文件
+                              base_name=$(basename "$main_vmdk" | sed 's/-s[0-9]*.vmdk$//')
+                              descriptor_file="$vmware_dir/$base_name.vmdk"
+                              
+                              if [ -f "$descriptor_file" ]; then
+                                  echo "Using descriptor file: $descriptor_file"
+                                  qemu-img convert -f vmdk -O qcow2 "$descriptor_file" kali-${version}.qcow2
+                              else
+                                  echo "No descriptor file found, trying main VMDK..."
+                                  qemu-img convert -f vmdk -O qcow2 "$main_vmdk" kali-${version}.qcow2
+                              fi
+                          else
+                              echo "Single VMDK file detected"
+                              qemu-img convert -f vmdk -O qcow2 "$main_vmdk" kali-${version}.qcow2
+                          fi
+                          
+                          if [ -f "kali-${version}.qcow2" ]; then
+                              echo "Successfully converted VMware image to qcow2"
+                              echo "Output file size: $(ls -lh kali-${version}.qcow2)"
+                              # 清理解压的文件
+                              rm -rf */
+                              rm -f kali-linux-${version}-vmware-amd64.7z
+                          else
+                              echo "VMDK conversion failed"
+                          fi
+                      else
+                          echo "No VMDK files found in $vmware_dir"
+                          ls -la "$vmware_dir"
+                      fi
+                  else
+                      echo "No .vmwarevm directory found, looking for loose VMDK files..."
+                      vmdk_file=$(find . -name "*.vmdk" | grep -v -- "-s[0-9]" | head -1)
+                      if [ -z "$vmdk_file" ]; then
+                          vmdk_file=$(find . -name "*.vmdk" | head -1)
+                      fi
+                      
+                      if [ -n "$vmdk_file" ]; then
+                          echo "Converting VMDK to qcow2: $vmdk_file"
+                          qemu-img convert -f vmdk -O qcow2 "$vmdk_file" kali-${version}.qcow2
+                          
+                          if [ -f "kali-${version}.qcow2" ]; then
+                              echo "Successfully converted VMware image to qcow2"
+                              # 清理解压的文件
+                              rm -rf */
+                              rm -f kali-linux-${version}-vmware-amd64.7z
+                          fi
+                      else
+                          echo "No VMDK files found after extraction"
                       fi
                   fi
               fi
