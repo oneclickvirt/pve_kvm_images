@@ -1,5 +1,7 @@
 # pve_kvm_images
 
+[![Downloads](https://ghdownload.spiritlhl.net/oneclickvirt/pve_kvm_images?color=00c62d)](https://github.com/oneclickvirt/pve_kvm_images/releases)
+
 [![Build PVE KVM images](https://github.com/oneclickvirt/pve_kvm_images/actions/workflows/main.yml/badge.svg)](https://github.com/oneclickvirt/pve_kvm_images/actions/workflows/main.yml)
 
 ## 说明
