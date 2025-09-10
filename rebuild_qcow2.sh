@@ -117,8 +117,10 @@ elif [[ "$qcow_file" == *"almalinux9"* || "$qcow_file" == *"rockylinux"* ]]; the
     sudo virt-customize -v -x -a $qcow_file --run-command "systemctl enable sshd"
     sudo virt-customize -v -x -a $qcow_file --run-command "systemctl start sshd"
     
-    echo "清理可能冲突的SSH配置文件..."
-    sudo virt-customize -v -x -a $qcow_file --run-command "rm -f /etc/ssh/sshd_config.d/*.conf"
+    echo "修改SSH配置目录中的文件..."
+    sudo virt-customize -v -x -a $qcow_file --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \;"
+    sudo virt-customize -v -x -a $qcow_file --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \;"
+    sudo virt-customize -v -x -a $qcow_file --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \;"
     
     echo "启用root登录..."
     sudo virt-customize -v -x -a $qcow_file --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
