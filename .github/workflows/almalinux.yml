@@ -29,6 +29,9 @@ jobs:
           sudo apt-get install -y curl wget unzip zip jq
           sudo apt-get install -y libguestfs-tools rng-tools curl axel
           sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
+          # Check KVM and libvirt permissions
+          ls -l /dev/kvm
+          ls -l /var/lib/libvirt/
 
       - name: Build Almalinux Images
         run: |
@@ -77,30 +80,67 @@ jobs:
                   rm -f almalinux-${version}.qcow2
                   continue
               fi
-              echo "Configuring SSH and root access for Almalinux $version..."
+              echo "Fixing cloud-init configuration for Almalinux $version..."
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable sshd"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*true/disable_root: false/g' /etc/cloud/cloud.cfg"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*1/disable_root: 0/g' /etc/cloud/cloud.cfg"
+              echo "Configuring SSH and root access for Almalinux $version..."
+              if [[ "$version" == "9" || "$version" == "10" ]]; then
+                  echo "Applying AlmaLinux 9/10 specific SSH configuration..."
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable ssh"
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable sshd"
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \; 2>/dev/null || true"
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \; 2>/dev/null || true"
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \; 2>/dev/null || true"
+              else
+                  echo "Applying AlmaLinux 8 specific SSH configuration..."
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable ssh"
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable sshd"
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec grep -l 'PermitRootLogin\|PasswordAuthentication' {} \; | xargs rm -f 2>/dev/null || true"
+              fi
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*Port.*/Port 22/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*AddressFamily.*/AddressFamily any/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress ::.*/ListenAddress ::/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl restart sshd"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl restart ssh"
               echo "Configuring qemu-guest-agent for Almalinux $version..."
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
-              echo "Setting root password and MOTD for Almalinux $version..."
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
+              echo "Applying additional system configurations for Almalinux $version..."
+              if [[ "$version" == "9" || "$version" == "10" ]]; then
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "dnf install -y openssh-server openssh-clients"
+              else
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "yum install -y openssh-server openssh-clients"
+              fi
+              echo "Setting enhanced MOTD and root password for Almalinux $version..."
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo 'AlmaLinux ${version} Cloud Image' >> /etc/motd"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo 'Default root password: oneclickvirt' >> /etc/motd"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
+              echo "Applying security and performance tweaks for Almalinux $version..."
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable crond"
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl start crond"
+              if [[ "$version" == "9" || "$version" == "10" ]]; then
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "dnf clean all"
+              else
+                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "yum clean all"
+              fi
+              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
+              echo "Creating backup and finalizing Almalinux $version image"
+              cp almalinux-${version}.qcow2 almalinux-${version}.qcow2.bak
               echo "Compressing Almalinux $version image"
               virt-sparsify --compress almalinux-${version}.qcow2 almalinux-${version}-custom.qcow2
               if [ $? -ne 0 ]; then
                   echo "Failed to compress Almalinux $version image, skipping..."
-                  rm -f almalinux-${version}.qcow2 almalinux-${version}-custom.qcow2
+                  rm -f almalinux-${version}.qcow2 almalinux-${version}-custom.qcow2 almalinux-${version}.qcow2.bak
                   continue
               fi
               mv almalinux-${version}-custom.qcow2 almalinux${version}.qcow2
@@ -111,7 +151,7 @@ jobs:
                   release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/almalinux" | jq -r '.id')
                   if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
                       echo "Release 'almalinux' not found, please create it first"
-                      rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2
+                      rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2 almalinux-${version}.qcow2.bak
                       continue
                   fi
                   echo "Found release ID: $release_id"
@@ -125,7 +165,7 @@ jobs:
                           echo "Existing asset deleted successfully."
                       else
                           echo "Failed to delete existing asset for $file. Skipping file upload..."
-                          rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2
+                          rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2 almalinux-${version}.qcow2.bak
                           continue
                       fi
                   else
@@ -153,7 +193,7 @@ jobs:
                   fi
               fi
               echo "Cleaning up files for Almalinux $version"
-              rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2
+              rm -f almalinux-${version}.qcow2 almalinux${version}.qcow2 almalinux-${version}.qcow2.bak
               echo "=== Completed processing Almalinux $version ==="
               echo ""
           done
