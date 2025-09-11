@@ -94,7 +94,6 @@ jobs:
                   echo "Applying AlmaLinux 8 specific SSH configuration..."
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable ssh"
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable sshd"
-                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec grep -l 'PermitRootLogin\|PasswordAuthentication' {} \; | xargs rm -f 2>/dev/null || true"
               fi
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
