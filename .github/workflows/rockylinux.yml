@@ -37,7 +37,7 @@ jobs:
           rockylinux_versions["8"]="8"
           for version in "9" "8"; do
               echo "=== Processing RockyLinux $version ==="
-              rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
+              rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
               echo "Downloading RockyLinux $version Cloud Image"
               download_url="https://download.rockylinux.org/pub/rocky/${version}/images/x86_64/Rocky-${version}-GenericCloud-Base.latest.x86_64.qcow2"
               axel -n 8 -o rockylinux-${version}.qcow2 "$download_url"
@@ -76,30 +76,63 @@ jobs:
                   rm -f rockylinux-${version}.qcow2
                   continue
               fi
-              echo "Configuring SSH and root access for RockyLinux $version..."
+              echo "Fixing cloud-init configuration for RockyLinux $version..."
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*true/disable_root: false/g' /etc/cloud/cloud.cfg"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*1/disable_root: 0/g' /etc/cloud/cloud.cfg"
+              echo "Configuring SSH and root access for RockyLinux $version..."
+              if [[ "$version" == "9" ]]; then
+                  echo "Applying RockyLinux 9 specific SSH configuration..."
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd"
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \; 2>/dev/null || true"
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \; 2>/dev/null || true"
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \; 2>/dev/null || true"
+              else
+                  echo "Applying RockyLinux 8 specific SSH configuration..."
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd"
+              fi
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*Port.*/Port 22/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*AddressFamily.*/AddressFamily any/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress ::.*/ListenAddress ::/g' /etc/ssh/sshd_config"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl restart sshd"
               echo "Configuring qemu-guest-agent for RockyLinux $version..."
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
-              echo "Setting root password and MOTD for RockyLinux $version..."
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
+              echo "Applying additional system configurations for RockyLinux $version..."
+              if [[ "$version" == "9" ]]; then
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "dnf install -y openssh-server openssh-clients"
+              else
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "yum install -y openssh-server openssh-clients"
+              fi
+              echo "Setting enhanced MOTD and root password for RockyLinux $version..."
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'RockyLinux ${version} Cloud Image' >> /etc/motd"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Default root password: oneclickvirt' >> /etc/motd"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
+              echo "Applying security and performance tweaks for RockyLinux $version..."
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable crond"
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl start crond"
+              if [[ "$version" == "9" ]]; then
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "dnf clean all"
+              else
+                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "yum clean all"
+              fi
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
+              echo "Creating backup and finalizing RockyLinux $version image"
+              cp rockylinux-${version}.qcow2 rockylinux-${version}.qcow2.bak
               echo "Compressing RockyLinux $version image"
               virt-sparsify --compress rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2
               if [ $? -ne 0 ]; then
                   echo "Failed to compress RockyLinux $version image, skipping..."
-                  rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2
+                  rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux-${version}.qcow2.bak
                   continue
               fi
               mv rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
@@ -110,7 +143,7 @@ jobs:
                   release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/rockylinux" | jq -r '.id')
                   if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
                       echo "Release 'rockylinux' not found, please create it first"
-                      rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2
+                      rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
                       continue
                   fi
                   echo "Found release ID: $release_id"
@@ -124,7 +157,7 @@ jobs:
                           echo "Existing asset deleted successfully."
                       else
                           echo "Failed to delete existing asset for $file. Skipping file upload..."
-                          rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2
+                          rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
                           continue
                       fi
                   else
@@ -152,7 +185,7 @@ jobs:
                   fi
               fi
               echo "Cleaning up files for RockyLinux $version"
-              rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2
+              rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
               echo "=== Completed processing RockyLinux $version ==="
               echo ""
           done
