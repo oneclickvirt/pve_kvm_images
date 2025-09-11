@@ -85,14 +85,12 @@ jobs:
               echo "Configuring SSH and root access for Almalinux $version..."
               if [[ "$version" == "9" || "$version" == "10" ]]; then
                   echo "Applying AlmaLinux 9/10 specific SSH configuration..."
-                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable ssh"
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable sshd"
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \; 2>/dev/null || true"
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \; 2>/dev/null || true"
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \; 2>/dev/null || true"
               else
                   echo "Applying AlmaLinux 8 specific SSH configuration..."
-                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable ssh"
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable sshd"
               fi
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
@@ -103,7 +101,6 @@ jobs:
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress ::.*/ListenAddress ::/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl restart sshd"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl restart ssh"
               echo "Configuring qemu-guest-agent for Almalinux $version..."
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
