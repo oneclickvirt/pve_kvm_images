@@ -29,9 +29,6 @@ jobs:
           sudo apt-get install -y curl wget unzip zip jq
           sudo apt-get install -y libguestfs-tools rng-tools curl axel
           sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
-          # Check KVM and libvirt permissions
-          ls -l /dev/kvm
-          ls -l /var/lib/libvirt/
 
       - name: Build Almalinux Images
         run: |
