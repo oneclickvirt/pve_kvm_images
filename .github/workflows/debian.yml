@@ -64,39 +64,78 @@ jobs:
               chmod 644 debian-${version}.qcow2
               # 自定义镜像
               echo "Customizing Debian $version image"
-              # 先替换源为阿里云镜像（支持DEB822格式和传统格式）
-              # Debian 13+ 使用 mirror+file: 协议，需要完全重写 debian.sources 文件
-              # 获取版本代号用于生成正确的源文件
-              if [ "$version" = "13" ]; then
-                  codename="trixie"
-              elif [ "$version" = "12" ]; then
-                  codename="bookworm"
-              elif [ "$version" = "11" ]; then
-                  codename="bullseye"
-              else
-                  codename="bookworm"
-              fi
-              # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
-              virt-customize -a debian-${version}.qcow2 \
+              
+              # 定义要安装的软件包列表
+              PACKAGES="sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,axel,net-tools,iputils-ping,iputils-arping,iputils-tracepath,nano,most,screen,less,vim,bzip2,lldpd,mtr-tiny,htop,dnsutils,zstd,cron,lsof"
+              
+              # 首先尝试使用官方源 + 网络安装
+              echo "Attempting network-based installation with official sources..."
+              virt-customize --network -a debian-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                 --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
                 --run-command "printf 'Types: deb\nURIs: https://deb.debian.org/debian\nSuites: ${codename} ${codename}-updates ${codename}-backports\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://deb.debian.org/debian-security\nSuites: ${codename}-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources" \
                 --run-command "sed -i 's|Types: deb deb-src|Types: deb|g' /etc/apt/sources.list.d/debian.sources || true" \
                 --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/01_debian_cloud.cfg || true" \
+                --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                 --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
                 --run-command "update-grub" \
                 --run-command "systemctl enable serial-getty@ttyS1.service" \
+                --update \
+                --install "$PACKAGES" \
+                --run-command "apt-get -y autoremove --purge && apt-get -y clean" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                --firstboot-command "apt-get update -y && apt-get install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 lldpd mtr-tiny htop dnsutils zstd cron lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && apt-get -y autoremove --purge && apt-get -y clean" \
                 --delete "/var/log/*.log" \
+                --delete "/var/lib/apt/lists/*" \
+                --delete "/var/cache/apt/*" \
                 --truncate "/etc/machine-id"
-              if [ $? -ne 0 ]; then
-                  echo "Failed to configure Debian $version, skipping..."
+              network_install_result=$?
+              
+              if [ $network_install_result -ne 0 ]; then
+                  echo "Network installation failed, falling back to firstboot installation..."
+                  # 重新下载干净的镜像
                   rm -f debian-${version}.qcow2
-                  continue
+                  axel -n 8 -o debian-${version}.qcow2 "$download_url" || curl -o debian-${version}.qcow2 "$download_url"
+                  if [ ! -f "debian-${version}.qcow2" ] || [ $(stat -c %s "debian-${version}.qcow2") -lt 10485760 ]; then
+                      echo "Failed to re-download Debian $version for fallback, skipping..."
+                      continue
+                  fi
+                  chmod 644 debian-${version}.qcow2
+                  
+                  # 使用 firstboot 方式安装
+                  virt-customize -a debian-${version}.qcow2 \
+                    --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
+                    --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
+                    --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/debian\nSuites: ${codename} ${codename}-updates ${codename}-backports\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://mirrors.aliyun.com/debian-security\nSuites: ${codename}-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources" \
+                    --run-command "sed -i 's|Types: deb deb-src|Types: deb|g' /etc/apt/sources.list.d/debian.sources || true" \
+                    --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/01_debian_cloud.cfg || true" \
+                    --timezone Asia/Hong_Kong \
+                    --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
+                    --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
+                    --run-command "update-grub" \
+                    --run-command "systemctl enable serial-getty@ttyS1.service" \
+                    --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+                    --firstboot-command "apt-get update -y && apt-get install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 lldpd mtr-tiny htop dnsutils zstd cron lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && apt-get -y autoremove --purge && apt-get -y clean" \
+                    --delete "/var/log/*.log" \
+                    --truncate "/etc/machine-id"
+                  if [ $? -ne 0 ]; then
+                      echo "Failed to configure Debian $version with fallback method, skipping..."
+                      rm -f debian-${version}.qcow2
+                      continue
+                  fi
+                  echo "Successfully configured Debian $version with firstboot installation method."
+              else
+                  echo "Network installation succeeded for Debian $version."
+                  # 网络安装成功后替换为阿里云源
+                  echo "Replacing sources with Aliyun mirrors for end users..."
+                  virt-customize -a debian-${version}.qcow2 \
+                    --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/debian\nSuites: ${codename} ${codename}-updates ${codename}-backports\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://mirrors.aliyun.com/debian-security\nSuites: ${codename}-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources"
               fi
+              
+              # 配置 qemu-guest-agent (如果已安装)
+              echo "Configuring qemu-guest-agent for Debian $version..."
+              sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent || true"
               echo "Configuring SSH and root access for Debian $version..."
               # SSH配置 - 启用密码认证和root登录
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"

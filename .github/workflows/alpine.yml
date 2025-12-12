@@ -121,22 +121,18 @@ jobs:
                       chmod 644 alpine-${version}.qcow2
                       
                       echo "Customizing Alpine $version image"
-                      # 先替换为阿里云镜像源
-                      virt-customize -a alpine-${version}.qcow2 \
-                        --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories" \
-                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories"
-                      if [ $? -ne 0 ]; then
-                          echo "Failed to configure sources for Alpine $version, skipping..."
-                          rm -f alpine-${version}.qcow2
-                          continue
-                      fi
-                      # 继续自定义镜像（需要网络）
+                      
+                      # 定义要安装的软件包列表
+                      PACKAGES="sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc"
+                      
+                      # 首先尝试使用官方源 + 网络安装
+                      echo "Attempting network-based installation with official sources..."
                       virt-customize --network -a alpine-${version}.qcow2 \
-                        --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
+                        --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                         --smp 2 \
                         --timezone Asia/Hong_Kong \
                         --run-command "apk update && apk upgrade" \
-                        --run-command "apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc" \
+                        --run-command "apk add $PACKAGES" \
                         --run-command "echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent" \
                         --run-command "echo 'name=\"QEMU Guest Agent\"' >> /etc/init.d/qemu-guest-agent" \
                         --run-command "echo 'command=\"/usr/bin/qemu-ga\"' >> /etc/init.d/qemu-guest-agent" \
@@ -148,15 +144,43 @@ jobs:
                         --run-command "echo '}' >> /etc/init.d/qemu-guest-agent" \
                         --run-command "chmod +x /etc/init.d/qemu-guest-agent" \
                         --run-command "rc-update add qemu-guest-agent boot" \
-                        --run-command "apk cache clean" \
+                        --run-command "apk cache clean || true" \
                         --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
                         --delete "/var/log/*.log" \
                         --delete "/var/cache/apk/*"
+                      network_install_result=$?
                       
-                      if [ $? -ne 0 ]; then
-                          echo "Failed to customize Alpine $version image, skipping..."
+                      if [ $network_install_result -ne 0 ]; then
+                          echo "Network installation failed, falling back to firstboot installation..."
+                          # 重新下载干净的镜像
                           rm -f alpine-${version}.qcow2
-                          continue
+                          if ! download_alpine_image "$version" "alpine-${version}.qcow2"; then
+                              echo "Failed to re-download Alpine $version for fallback, skipping..."
+                              continue
+                          fi
+                          chmod 644 alpine-${version}.qcow2
+                          
+                          # 使用阿里云源 + firstboot 方式安装
+                          virt-customize -a alpine-${version}.qcow2 \
+                            --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories" \
+                            --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories" \
+                            --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
+                            --timezone Asia/Hong_Kong \
+                            --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
+                            --firstboot-command "apk update && apk upgrade && apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc && echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent && echo 'name=\"QEMU Guest Agent\"' >> /etc/init.d/qemu-guest-agent && echo 'command=\"/usr/bin/qemu-ga\"' >> /etc/init.d/qemu-guest-agent && echo 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent && echo 'pidfile=\"/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent && echo 'depend() { need localmount; after bootmisc; }' >> /etc/init.d/qemu-guest-agent && chmod +x /etc/init.d/qemu-guest-agent && rc-update add qemu-guest-agent boot && rc-update add sshd boot && apk cache clean || true"
+                          if [ $? -ne 0 ]; then
+                              echo "Failed to configure Alpine $version with fallback method, skipping..."
+                              rm -f alpine-${version}.qcow2
+                              continue
+                          fi
+                          echo "Successfully configured Alpine $version with firstboot installation method."
+                      else
+                          echo "Network installation succeeded for Alpine $version."
+                          # 网络安装成功后替换为阿里云源
+                          echo "Replacing sources with Aliyun mirrors for end users..."
+                          virt-customize -a alpine-${version}.qcow2 \
+                            --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories" \
+                            --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories"
                       fi
                       
                       echo "Configuring SSH and root access for Alpine $version..."
