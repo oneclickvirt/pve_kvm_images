@@ -99,14 +99,13 @@ jobs:
               fi
               # 安装软件包和其他配置
               virt-customize --network -a debian-${version}.qcow2 \
-                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                 --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
                 --run-command "update-grub" \
                 --run-command "systemctl enable serial-getty@ttyS1.service" \
-                --install "sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,axel,net-tools,iputils-ping,iputils-arping,iputils-tracepath,nano,most,screen,less,vim,bzip2,lldpd,mtr-tiny,htop,dnsutils,zstd,cron,lsof" \
+                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf; apt-get update -y && apt-get install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 lldpd mtr-tiny htop dnsutils zstd cron lsof" \
                 --run-command "apt-get -y autoremove --purge && apt-get -y clean" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
                 --delete "/var/log/*.log" \
