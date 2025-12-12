@@ -32,6 +32,10 @@ jobs:
 
       - name: Build Ubuntu Images
         run: |
+          export LIBGUESTFS_DEBUG=1
+          export LIBGUESTFS_TRACE=1
+          export LIBGUESTFS_BACKEND=direct
+          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
           # 定义版本信息 (从新到旧)
           declare -A ubuntu_versions
           ubuntu_versions["24.04"]="noble"

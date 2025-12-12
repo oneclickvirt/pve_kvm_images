@@ -29,6 +29,10 @@ jobs:
           sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
       - name: Build Debian Images
         run: |
+          export LIBGUESTFS_DEBUG=1
+          export LIBGUESTFS_TRACE=1
+          export LIBGUESTFS_BACKEND=direct
+          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
           # 定义版本信息 (从新到旧)
           declare -A debian_versions
           debian_versions["13"]="trixie"

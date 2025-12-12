@@ -32,6 +32,10 @@ jobs:
 
       - name: Build Almalinux Images
         run: |
+          export LIBGUESTFS_DEBUG=1
+          export LIBGUESTFS_TRACE=1
+          export LIBGUESTFS_BACKEND=direct
+          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
           declare -A almalinux_versions
           almalinux_versions["10"]="10"
           almalinux_versions["9"]="9"

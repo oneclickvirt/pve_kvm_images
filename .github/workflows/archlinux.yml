@@ -32,6 +32,10 @@ jobs:
 
       - name: Build Arch Linux Images
         run: |
+          export LIBGUESTFS_DEBUG=1
+          export LIBGUESTFS_TRACE=1
+          export LIBGUESTFS_BACKEND=direct
+          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
           echo "=== Processing Arch Linux ==="
           rm -f archlinux.qcow2 archlinux-custom.qcow2 archlinux-latest.qcow2
           echo "Downloading Arch Linux Cloud Image"

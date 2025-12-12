@@ -32,6 +32,10 @@ jobs:
 
             - name: Build Alpine Images
               run: |
+                  export LIBGUESTFS_DEBUG=1
+                  export LIBGUESTFS_TRACE=1
+                  export LIBGUESTFS_BACKEND=direct
+                  export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
                   declare -A alpine_versions
                   alpine_versions["3.22"]="3.22"
                   alpine_versions["3.21"]="3.21"

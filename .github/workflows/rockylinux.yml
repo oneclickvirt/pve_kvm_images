@@ -32,6 +32,10 @@ jobs:
 
       - name: Build RockyLinux Images
         run: |
+          export LIBGUESTFS_DEBUG=1
+          export LIBGUESTFS_TRACE=1
+          export LIBGUESTFS_BACKEND=direct
+          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
           declare -A rockylinux_versions
           rockylinux_versions["9"]="9"
           rockylinux_versions["8"]="8"
