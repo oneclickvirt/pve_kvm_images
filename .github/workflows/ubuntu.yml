@@ -77,12 +77,14 @@ jobs:
                   esac
                   virt-customize -a ubuntu-${version}.qcow2 \
                     --run-command "rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true" \
-                    --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/ubuntu\nSuites: ${codename} ${codename}-updates ${codename}-backports ${codename}-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources"
+                    --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/ubuntu\nSuites: ${codename} ${codename}-updates ${codename}-backports ${codename}-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources" \
+                    --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf"
               else
                   # Ubuntu 22.04 及更早版本使用传统格式
                   virt-customize -a ubuntu-${version}.qcow2 \
                     --run-command "if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then sed -i 's|URIs: http://archive.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; sed -i 's|URIs: http://security.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; fi" \
-                    --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://archive.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://security.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://ports.ubuntu.com#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
+                    --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://archive.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://security.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://ports.ubuntu.com#https://mirrors.aliyun.com#g' \"\$f\"; done || true" \
+                    --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf"
               fi
               # 继续自定义镜像（需要网络）
               virt-customize --network -a ubuntu-${version}.qcow2 \

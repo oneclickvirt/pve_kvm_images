@@ -124,7 +124,8 @@ jobs:
                       # 先替换为阿里云镜像源
                       virt-customize -a alpine-${version}.qcow2 \
                         --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories" \
-                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories"
+                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories" \
+                        --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf"
                       # 继续自定义镜像（需要网络）
                       virt-customize --network -a alpine-${version}.qcow2 \
                         --smp 2 \
