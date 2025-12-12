@@ -77,12 +77,7 @@ jobs:
                   esac
                   virt-customize -a ubuntu-${version}.qcow2 \
                     --run-command "rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true" \
-                    --write "/etc/apt/sources.list.d/aliyun.sources:Types: deb
-URIs: https://mirrors.aliyun.com/ubuntu
-Suites: ${codename} ${codename}-updates ${codename}-backports ${codename}-security
-Components: main restricted universe multiverse
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-"
+                    --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/ubuntu\nSuites: ${codename} ${codename}-updates ${codename}-backports ${codename}-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources"
               else
                   # Ubuntu 22.04 及更早版本使用传统格式
                   virt-customize -a ubuntu-${version}.qcow2 \
