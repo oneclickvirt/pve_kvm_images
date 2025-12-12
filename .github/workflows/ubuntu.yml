@@ -102,6 +102,7 @@ jobs:
               echo "Attempting network-based installation with official sources..."
               configure_ubuntu_official_source "ubuntu-${version}.qcow2" "$version" "$codename"
               
+              network_install_result=0
               virt-customize --network -a ubuntu-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                 --smp 2 \
@@ -118,8 +119,7 @@ jobs:
                 --delete "/var/log/*.log" \
                 --delete "/var/lib/apt/lists/*" \
                 --delete "/var/cache/apt/*" \
-                --truncate "/etc/machine-id"
-              network_install_result=$?
+                --truncate "/etc/machine-id" || network_install_result=$?
               
               if [ $network_install_result -ne 0 ]; then
                   echo "Network installation failed, falling back to firstboot installation..."

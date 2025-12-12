@@ -90,6 +90,7 @@ jobs:
           
           echo "Customizing Arch Linux image - Phase 3~6: Pacman Keys & Update"
           # 首先尝试使用官方源 + 网络安装
+          network_install_result=0
           virt-customize --network -a archlinux-expanded.qcow2 \
             --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
             --run-command "pacman-key --init" \
@@ -99,8 +100,7 @@ jobs:
             --run-command "gpgconf --kill all || true" \
             --run-command "pkill -9 -x dirmngr || true" \
             --run-command "pkill -9 -x gpg-agent || true" \
-            --run-command "sync"
-          network_install_result=$?
+            --run-command "sync" || network_install_result=$?
           
           if [ $network_install_result -ne 0 ]; then
               echo "Network update failed, falling back to firstboot installation..."
