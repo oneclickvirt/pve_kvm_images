@@ -100,21 +100,7 @@ jobs:
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*AddressFamily.*/AddressFamily any/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress ::.*/ListenAddress ::/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl restart sshd"
               echo "Configuring qemu-guest-agent for Almalinux $version..."
-              # 先确保 qemu-guest-agent 已安装，再启用服务
-              if [[ "$version" == "9" || "$version" == "10" ]]; then
-                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "dnf install -y qemu-guest-agent || true"
-              else
-                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "yum install -y qemu-guest-agent || true"
-              fi
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service file not found, will be configured on first boot'; fi"
-              echo "Applying additional system configurations for Almalinux $version..."
-              if [[ "$version" == "9" || "$version" == "10" ]]; then
-                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "dnf install -y openssh-server openssh-clients"
-              else
-                  sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "yum install -y openssh-server openssh-clients"
-              fi
               echo "Setting enhanced MOTD and root password for Almalinux $version..."
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo 'AlmaLinux ${version} Cloud Image' >> /etc/motd"
@@ -125,7 +111,6 @@ jobs:
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
               echo "Applying security and performance tweaks for Almalinux $version..."
               sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl enable crond"
-              sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "systemctl start crond"
               if [[ "$version" == "9" || "$version" == "10" ]]; then
                   sudo virt-customize -v -x -a almalinux-${version}.qcow2 --run-command "dnf clean all"
               else

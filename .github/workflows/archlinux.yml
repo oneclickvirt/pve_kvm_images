@@ -111,9 +111,6 @@ jobs:
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
           echo "Configuring qemu-guest-agent for Arch Linux..."
-          # 先确保 qemu-guest-agent 已安装，再启用服务
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "pacman -S --noconfirm qemu-guest-agent || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service file not found, will be configured on first boot'; fi"
           echo "Setting root password and MOTD for Arch Linux..."
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo '' > /etc/motd"

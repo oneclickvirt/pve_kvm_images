@@ -149,8 +149,6 @@ jobs:
                       sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
                       
                       echo "Configuring qemu-guest-agent for Alpine $version..."
-                      # 只添加到开机启动，不在构建时启动服务
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add qemu-guest-agent boot || true"
                       
                       echo "Setting root password and MOTD for Alpine $version..."
                       sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
