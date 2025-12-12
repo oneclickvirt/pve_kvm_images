@@ -121,6 +121,11 @@ jobs:
                       chmod 644 alpine-${version}.qcow2
                       
                       echo "Customizing Alpine $version image"
+                      # 先替换为阿里云镜像源
+                      virt-customize -a alpine-${version}.qcow2 \
+                        --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories" \
+                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories"
+                      # 继续自定义镜像
                       virt-customize -a alpine-${version}.qcow2 \
                         --smp 2 \
                         --timezone Asia/Hong_Kong \

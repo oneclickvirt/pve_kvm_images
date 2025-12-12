@@ -63,6 +63,10 @@ jobs:
               cp archlinux.qcow2 archlinux-expanded.qcow2
               qemu-img resize archlinux-expanded.qcow2 +2G
           fi
+          # 先替换为阿里云镜像源
+          echo "Replacing pacman mirrors with Aliyun..."
+          virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist"
           echo "Customizing Arch Linux image - Phase 1: Basic Setup"
           virt-customize -a archlinux-expanded.qcow2 \
             --smp 1 \

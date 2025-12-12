@@ -57,6 +57,10 @@ jobs:
               fi
               chmod 644 almalinux-${version}.qcow2
               echo "Customizing Almalinux $version image"
+              # 先替换为阿里云镜像源
+              virt-customize -a almalinux-${version}.qcow2 \
+                --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^# *baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/almalinux*.repo"
+              # 继续自定义镜像
               virt-customize -a almalinux-${version}.qcow2 \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
