@@ -25,7 +25,25 @@ jobs:
           export LIBGUESTFS_TRACE=1
           export LIBGUESTFS_BACKEND=direct
           export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
-          sudo apt-get update
+                    sudo bash -lc '
+set -e
+shopt -s nullglob
+files=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
+for f in "${files[@]}"; do
+    [[ -f "$f" ]] || continue
+    cp -a "$f" "$f.bak" 2>/dev/null || true
+    sed -i -E \
+        -e "s#(http|https)://deb.debian.org#https://mirrors.aliyun.com#g" \
+        -e "s#(http|https)://httpredir.debian.org#https://mirrors.aliyun.com#g" \
+        -e "s#(http|https)://security.debian.org#https://mirrors.aliyun.com#g" \
+        -e "s#(http|https)://security-cdn.debian.org#https://mirrors.aliyun.com#g" \
+        -e "s#(http|https)://ftp.debian.org#https://mirrors.aliyun.com#g" \
+        -e "s#(http|https)://archive.ubuntu.com#https://mirrors.aliyun.com#g" \
+        -e "s#(http|https)://security.ubuntu.com#https://mirrors.aliyun.com#g" \
+        "$f"
+done
+apt-get update -y
+'
           sudo apt-get install -y curl wget unzip zip jq
           sudo apt-get install -y libguestfs-tools rng-tools curl axel
           sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing

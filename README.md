@@ -6,6 +6,8 @@
 
 ## 说明
 
+镜像内在执行包管理器更新/安装前，会先把软件源切换到阿里云镜像并刷新索引/缓存，以规避部分官方源不可用导致的更新失败。
+
 Releases中的镜像(每日拉取镜像进行自动修补和更新)：
 
 已预安装：wget curl openssh-server sshpass sudo cron(cronie) qemu-guest-agent
