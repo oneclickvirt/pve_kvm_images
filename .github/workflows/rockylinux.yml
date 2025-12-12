@@ -58,10 +58,10 @@ jobs:
               echo "Customizing RockyLinux $version image"
               # 先替换为阿里云镜像源
               virt-customize -a rockylinux-${version}.qcow2 \
-                --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo" \
-                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf"
+                --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo"
               # 继续自定义镜像（需要网络）
               virt-customize --network -a rockylinux-${version}.qcow2 \
+                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \

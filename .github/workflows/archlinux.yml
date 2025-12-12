@@ -66,8 +66,7 @@ jobs:
           # 先替换为阿里云镜像源
           echo "Replacing pacman mirrors with Aliyun..."
           virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist" \
-            --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf"
+            --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist"
           echo "Customizing Arch Linux image - Phase 1: Basic Setup"
           virt-customize -a archlinux-expanded.qcow2 \
             --smp 1 \
@@ -94,6 +93,7 @@ jobs:
           
           echo "Customizing Arch Linux image - Phase 3~6: Pacman Keys & Update"
           virt-customize --network -a archlinux-expanded.qcow2 \
+            --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
             --run-command "pacman-key --init" \
             --run-command "pacman-key --populate archlinux" \
             --run-command "pacman -Sy --noconfirm archlinux-keyring" \
