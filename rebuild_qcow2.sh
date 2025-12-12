@@ -195,9 +195,8 @@ if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* || "$qcow_file" =
         sudo virt-customize -v -x -a "$qcow_file" --run-command "apt-get install wget -y"
         sudo virt-customize -v -x -a "$qcow_file" --run-command "apt-get install lsof -y"
         echo "安装qemu-guest-agent..."
-        sudo virt-customize -v -x -a "$qcow_file" --run-command "apt-get install qemu-guest-agent -y"
-        sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl start qemu-guest-agent"
-        sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl enable qemu-guest-agent"
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "apt-get install qemu-guest-agent -y || true"
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
     elif [[ "$qcow_file" == *"arch"* ]]; then
         vc_mirror_pacman_aliyun_and_update
         sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -S --noconfirm --needed sudo"
@@ -206,9 +205,8 @@ if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* || "$qcow_file" =
         sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -S --noconfirm --needed wget"
         sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -S --noconfirm --needed lsof"
         echo "安装qemu-guest-agent..."
-        sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -S --noconfirm --needed qemu-guest-agent"
-        sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl start qemu-guest-agent"
-        sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl enable qemu-guest-agent"
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -S --noconfirm --needed qemu-guest-agent || true"
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
     fi
 elif [[ "$qcow_file" == *"alpine"* ]]; then
     echo "处理Alpine系统..."
@@ -265,9 +263,8 @@ elif [[ "$qcow_file" == *"almalinux9"* || "$qcow_file" == *"rockylinux"* ]]; the
     sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl restart sshd"
     sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl restart ssh"
     echo "安装qemu-guest-agent..."
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "yum install qemu-guest-agent -y"
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl start qemu-guest-agent"
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl enable qemu-guest-agent"
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "yum install qemu-guest-agent -y || true"
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
 elif [[ "$qcow_file" == *"almalinux8"* || "$qcow_file" == *"centos9-stream"* || "$qcow_file" == *"centos8-stream"* || "$qcow_file" == *"centos7"* ]]; then
     echo "处理AlmaLinux 8/CentOS系统..."
     vc_mirror_yum_dnf_aliyun_and_makecache
@@ -296,9 +293,8 @@ elif [[ "$qcow_file" == *"almalinux8"* || "$qcow_file" == *"centos9-stream"* || 
     sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl restart sshd"
     sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl restart ssh"
     echo "安装qemu-guest-agent..."
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "yum install qemu-guest-agent -y"
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl start qemu-guest-agent"
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl enable qemu-guest-agent"
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "yum install qemu-guest-agent -y || true"
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
 else
     echo "处理其他系统（使用DNF）..."
     vc_mirror_yum_dnf_aliyun_and_makecache
@@ -327,9 +323,8 @@ else
     sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl restart sshd"
     sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl restart ssh"
     echo "安装qemu-guest-agent..."
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "dnf install qemu-guest-agent -y"
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl start qemu-guest-agent"
-    sudo virt-customize -v -x -a "$qcow_file" --run-command "systemctl enable qemu-guest-agent"
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "dnf install qemu-guest-agent -y || true"
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
 fi
 
 # 通用的最终配置

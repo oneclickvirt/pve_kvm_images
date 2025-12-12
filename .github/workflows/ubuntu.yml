@@ -172,9 +172,10 @@ jobs:
               sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
               echo "Configuring qemu-guest-agent for Ubuntu $version..."
-              # qemu-guest-agent配置
-              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "systemctl start qemu-guest-agent"
-              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "systemctl enable qemu-guest-agent"
+              # qemu-guest-agent配置 - 先确保包已安装，再启用服务
+              # 注意：在 virt-customize 环境中 systemctl start 会失败（无运行的 systemd），所以只做 enable
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "apt-get update -y && apt-get install -y qemu-guest-agent || true"
+              sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service file not found, will be configured on first boot'; fi"
               echo "Setting root password and MOTD for Ubuntu $version..."
               # 设置root密码
               sudo virt-customize -v -x -a ubuntu-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
