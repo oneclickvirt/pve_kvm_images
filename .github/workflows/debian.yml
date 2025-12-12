@@ -99,6 +99,7 @@ jobs:
               fi
               # 安装软件包和其他配置
               virt-customize --network -a debian-${version}.qcow2 \
+                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
