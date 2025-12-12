@@ -76,27 +76,35 @@ jobs:
               else
                   codename="bookworm"
               fi
+              # 先设置 DNS 和源（不需要网络）
               virt-customize -a debian-${version}.qcow2 \
+                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
                 --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
                 --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/debian\nSuites: ${codename} ${codename}-updates ${codename}-backports\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://mirrors.aliyun.com/debian-security\nSuites: ${codename}-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources" \
-                --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://deb.debian.org#https://mirrors.aliyun.com#g; s#https?://security.debian.org#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
+                --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://deb.debian.org#https://mirrors.aliyun.com#g; s#https?://security.debian.org#https://mirrors.aliyun.com#g' \"\$f\"; done || true" \
+                --run-command "sed -i 's|Types: deb deb-src|Types: deb|g' /etc/apt/sources.list.d/aliyun.sources || true" \
+                --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/01_debian_cloud.cfg || true"
               if [ $? -ne 0 ]; then
                   echo "Failed to configure sources for Debian $version, skipping..."
                   rm -f debian-${version}.qcow2
                   continue
               fi
-              # 继续自定义镜像（需要网络）
+              # 继续自定义镜像（需要网络）- 先单独更新包列表
               virt-customize --network -a debian-${version}.qcow2 \
-                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
+                --run-command "apt-get update -y"
+              if [ $? -ne 0 ]; then
+                  echo "Failed to update package list for Debian $version, skipping..."
+                  rm -f debian-${version}.qcow2
+                  continue
+              fi
+              # 安装软件包和其他配置
+              virt-customize --network -a debian-${version}.qcow2 \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                 --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
                 --run-command "update-grub" \
                 --run-command "systemctl enable serial-getty@ttyS1.service" \
-                --run-command "sed -i 's|Types: deb deb-src|Types: deb|g' /etc/apt/sources.list.d/aliyun.sources || true" \
-                --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/01_debian_cloud.cfg || true" \
-                --update \
                 --install "sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,axel,net-tools,iputils-ping,iputils-arping,iputils-tracepath,nano,most,screen,less,vim,bzip2,lldpd,mtr-tiny,htop,dnsutils,zstd,cron,lsof" \
                 --run-command "apt-get -y autoremove --purge && apt-get -y clean" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
