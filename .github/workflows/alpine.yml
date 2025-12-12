@@ -36,7 +36,6 @@ jobs:
                   alpine_versions["3.22"]="3.22"
                   alpine_versions["3.21"]="3.21"
                   alpine_versions["3.20"]="3.20"
-
                   get_latest_timestamp() {
                       local version=$1
                       local base_url="https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/"
