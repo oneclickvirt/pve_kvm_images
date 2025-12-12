@@ -65,9 +65,31 @@ jobs:
               # 自定义镜像
               echo "Customizing Debian $version image"
               # 先替换源为阿里云镜像（支持DEB822格式和传统格式）
+              # Debian 13+ 使用 mirror+file: 协议，需要完全重写 debian.sources 文件
+              # 获取版本代号用于生成正确的源文件
+              if [ "$version" = "13" ]; then
+                  codename="trixie"
+              elif [ "$version" = "12" ]; then
+                  codename="bookworm"
+              elif [ "$version" = "11" ]; then
+                  codename="bullseye"
+              else
+                  codename="bookworm"
+              fi
               virt-customize -a debian-${version}.qcow2 \
-                --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list 2>/dev/null || true" \
-                --run-command "if [ -f /etc/apt/sources.list.d/debian.sources ]; then sed -i 's|URIs: https://deb.debian.org/debian|URIs: https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources; sed -i 's|URIs: https://deb.debian.org/debian-security|URIs: https://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources; sed -i 's|URIs: http://deb.debian.org/debian|URIs: https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources; sed -i 's|URIs: http://deb.debian.org/debian-security|URIs: https://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources; fi" \
+                --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
+                --write "/etc/apt/sources.list.d/aliyun.sources:Types: deb
+URIs: https://mirrors.aliyun.com/debian
+Suites: ${codename} ${codename}-updates ${codename}-backports
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: https://mirrors.aliyun.com/debian-security
+Suites: ${codename}-security
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+" \
                 --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://deb.debian.org#https://mirrors.aliyun.com#g; s#https?://security.debian.org#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
               # 继续自定义镜像
               virt-customize -a debian-${version}.qcow2 \

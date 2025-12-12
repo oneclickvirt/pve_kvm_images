@@ -66,9 +66,29 @@ jobs:
               # 自定义镜像
               echo "Customizing Ubuntu $version image"
               # 先替换源为阿里云镜像（支持DEB822格式和传统格式）
-              virt-customize -a ubuntu-${version}.qcow2 \
-                --run-command "if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then sed -i 's|URIs: http://archive.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; sed -i 's|URIs: http://security.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; fi" \
-                --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://archive.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://security.ubuntu.com#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
+              # Ubuntu 24.04+ 使用 DEB822 格式，需要完全重写源文件
+              if [ "$version" = "24.04" ] || [ "$version" = "24.10" ] || [ "$version" = "25.04" ]; then
+                  # 获取代号
+                  case "$version" in
+                      "24.04") codename="noble" ;;
+                      "24.10") codename="oracular" ;;
+                      "25.04") codename="plucky" ;;
+                      *) codename="noble" ;;
+                  esac
+                  virt-customize -a ubuntu-${version}.qcow2 \
+                    --run-command "rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true" \
+                    --write "/etc/apt/sources.list.d/aliyun.sources:Types: deb
+URIs: https://mirrors.aliyun.com/ubuntu
+Suites: ${codename} ${codename}-updates ${codename}-backports ${codename}-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+"
+              else
+                  # Ubuntu 22.04 及更早版本使用传统格式
+                  virt-customize -a ubuntu-${version}.qcow2 \
+                    --run-command "if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then sed -i 's|URIs: http://archive.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; sed -i 's|URIs: http://security.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; fi" \
+                    --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://archive.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://security.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://ports.ubuntu.com#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
+              fi
               # 继续自定义镜像
               virt-customize -a ubuntu-${version}.qcow2 \
                 --smp 2 \
