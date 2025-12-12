@@ -37,10 +37,6 @@ jobs:
               for image in "${images[@]}"; do
                   echo "$image"
                   curl -m 60 -o $image "https://down.idc.wiki/Image/realServer-Template/current/qcow2/$image"
-                  if [ $? -ne 0 ]; then
-                      sleep 6
-                      curl -m 60 -o $image "https://down.idc.wiki/Image/realServer-Template/current/qcow2/$image"
-                  fi
                   chmod 777 $image
                   sleep 1
               done

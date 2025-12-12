@@ -88,98 +88,17 @@ jobs:
           fi
           sleep 5
           
-          echo "Customizing Arch Linux image - Phase 3~6: Pacman Keys & Update"
-          # 首先尝试使用官方源 + 网络安装
-          network_install_result=0
-          virt-customize --network -a archlinux-expanded.qcow2 \
+          echo "Customizing Arch Linux image - Phase 3: Package configuration"
+          # 配置阿里云源
+          virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist" \
             --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
-            --run-command "pacman-key --init" \
-            --run-command "pacman-key --populate archlinux" \
-            --run-command "pacman -Sy --noconfirm archlinux-keyring" \
-            --run-command "pacman -Syu --noconfirm" \
-            --run-command "gpgconf --kill all || true" \
-            --run-command "pkill -9 -x dirmngr || true" \
-            --run-command "pkill -9 -x gpg-agent || true" \
-            --run-command "sync" || network_install_result=$?
-          
-          if [ $network_install_result -ne 0 ]; then
-              echo "Network update failed, falling back to firstboot installation..."
-              # 重新下载干净的镜像
+            --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+            --firstboot-command "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm && pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof openssh && systemctl enable qemu-guest-agent && systemctl enable sshd && pacman -Scc --noconfirm"
+          if [ $? -ne 0 ]; then
+              echo "Failed to configure Arch Linux, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
-              axel -n 8 -o archlinux.qcow2 "$download_url" || curl -o archlinux.qcow2 "$download_url"
-              if [ ! -f "archlinux.qcow2" ] || [ $(stat -c %s "archlinux.qcow2") -lt 10485760 ]; then
-                  echo "Failed to re-download Arch Linux for fallback, exiting..."
-                  exit 1
-              fi
-              chmod 644 archlinux.qcow2
-              qemu-img resize archlinux.qcow2 +2G
-              qemu-img create -f qcow2 archlinux-expanded.qcow2 4G
-              virt-resize --expand /dev/sda3 archlinux.qcow2 archlinux-expanded.qcow2 || {
-                  cp archlinux.qcow2 archlinux-expanded.qcow2
-                  qemu-img resize archlinux-expanded.qcow2 +2G
-              }
-              
-              # 配置阿里云源
-              virt-customize -a archlinux-expanded.qcow2 \
-                --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist" \
-                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
-                --smp 1 \
-                --timezone Asia/Hong_Kong \
-                --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
-                --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
-                --run-command "grub-mkconfig -o /boot/grub/grub.cfg || true" \
-                --run-command "systemctl enable serial-getty@ttyS1.service" \
-                --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                --firstboot-command "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm && pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof openssh && systemctl enable qemu-guest-agent && systemctl enable sshd"
-              if [ $? -ne 0 ]; then
-                  echo "Failed to configure Arch Linux with fallback method, exiting..."
-                  rm -f archlinux.qcow2 archlinux-expanded.qcow2
-                  exit 1
-              fi
-              echo "Successfully configured Arch Linux with firstboot installation method."
-          else
-              echo "Network update succeeded, continuing with package installation..."
-              
-              echo "Installing essential packages..."
-              virt-customize --network -a archlinux-expanded.qcow2 \
-                --run-command "pacman -S --noconfirm cloud-guest-utils qemu-guest-agent" \
-                --run-command "sync"
-              if [ $? -ne 0 ]; then
-                  echo "Failed to install essential packages, exiting..."
-                  rm -f archlinux.qcow2 archlinux-expanded.qcow2
-                  exit 1
-              fi
-              
-              echo "Installing additional packages..."
-              virt-customize --network -a archlinux-expanded.qcow2 \
-                --run-command "pacman -S --noconfirm sudo spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof" \
-                --run-command "sync"
-              if [ $? -ne 0 ]; then
-                  echo "Failed to install additional packages, exiting..."
-                  rm -f archlinux.qcow2 archlinux-expanded.qcow2
-                  exit 1
-              fi
-              
-              echo "Final system configuration..."
-              virt-customize -a archlinux-expanded.qcow2 \
-                --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                --run-command "sync"
-              if [ $? -ne 0 ]; then
-                  echo "Failed to configure system, exiting..."
-                  rm -f archlinux.qcow2 archlinux-expanded.qcow2
-                  exit 1
-              fi
-              
-              echo "System cleanup - removing logs and cache..."
-              virt-customize -a archlinux-expanded.qcow2 \
-                --run-command "rm -rf /var/log/*.log || true" \
-                --run-command "rm -rf /var/cache/pacman/pkg/* || true" \
-                --run-command "sync"
-              
-              # 网络安装成功后替换为阿里云源
-              echo "Replacing sources with Aliyun mirrors for end users..."
-              virt-customize -a archlinux-expanded.qcow2 \
-                --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist"
+              exit 1
           fi
           echo "Configuring SSH and root access for Arch Linux..."
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"

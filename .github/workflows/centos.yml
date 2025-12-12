@@ -71,78 +71,28 @@ jobs:
                           grub_config_path="/boot/grub2/grub.cfg"
                       fi
                       
-                      # 定义要安装的软件包列表
-                      PACKAGES="sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,net-tools,iputils,nano,screen,less,vim,bzip2,lldpad,mtr,htop,bind-utils,zstd,cronie,lsof"
+                      # 对于 CentOS 8，配置阿里云源
+                      if [ "$version" != "9" ]; then
+                        virt-customize -a centos-${version}.qcow2 \
+                          --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^#baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo || true"
+                      fi
                       
-                      # 首先尝试使用官方源 + 网络安装
-                      echo "Attempting network-based installation with official sources..."
-                      network_install_result=0
-                      virt-customize --network -a centos-${version}.qcow2 \
+                      # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
+                      virt-customize -a centos-${version}.qcow2 \
                         --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
-                        --smp 2 \
                         --timezone Asia/Hong_Kong \
                         --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                         --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
                         --run-command "grub2-mkconfig -o $grub_config_path" \
                         --run-command "systemctl enable serial-getty@ttyS1.service" \
-                        --update \
-                        --run-command "$package_manager install -y epel-release" \
-                        --install "$PACKAGES" \
-                        --run-command "$package_manager -y autoremove && $package_manager -y clean all" \
                         --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+                        --firstboot-command "$package_manager install -y epel-release && $package_manager install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 lldpad mtr htop bind-utils zstd cronie lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && $package_manager -y autoremove && $package_manager -y clean all" \
                         --delete "/var/log/*.log" \
-                        --delete "/var/cache/yum/*" \
-                        --delete "/var/cache/dnf/*" \
-                        --truncate "/etc/machine-id" || network_install_result=$?
-                      
-                      if [ $network_install_result -ne 0 ]; then
-                          echo "Network installation failed, falling back to firstboot installation..."
-                          # 重新下载干净的镜像
+                        --truncate "/etc/machine-id"
+                      if [ $? -ne 0 ]; then
+                          echo "Failed to configure CentOS $version, skipping..."
                           rm -f centos-${version}.qcow2
-                          axel -n 8 -o centos-${version}.qcow2 "$download_url" || curl -o centos-${version}.qcow2 "$download_url"
-                          if [ ! -f "centos-${version}.qcow2" ] || [ $(stat -c %s "centos-${version}.qcow2") -lt 10485760 ]; then
-                              echo "Failed to re-download CentOS $version for fallback, skipping..."
-                              continue
-                          fi
-                          chmod 644 centos-${version}.qcow2
-                          
-                          # 对于 CentOS 8，下载换源脚本并配置阿里云源（用于 firstboot 安装）
-                          if [ "$version" != "9" ]; then
-                            virt-customize --network -a centos-${version}.qcow2 \
-                                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
-                                --run-command "curl -Lk https://gitee.com/SuperManito/LinuxMirrors/raw/main/ChangeMirrors.sh -o /root/ChangeMirrors.sh || true"
-                            virt-customize -a centos-${version}.qcow2 \
-                                --run-command "chmod +x /root/ChangeMirrors.sh && bash /root/ChangeMirrors.sh --source mirrors.aliyun.com --web-protocol https --intranet false --backup true --update-software false --clean-cache false --ignore-backup-tips || true"
-                          fi
-                          
-                          # 使用 firstboot 方式安装
-                          virt-customize -a centos-${version}.qcow2 \
-                            --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
-                            --timezone Asia/Hong_Kong \
-                            --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
-                            --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
-                            --run-command "grub2-mkconfig -o $grub_config_path || true" \
-                            --run-command "systemctl enable serial-getty@ttyS1.service" \
-                            --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                            --firstboot-command "$package_manager install -y epel-release && $package_manager install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 lldpad mtr htop bind-utils zstd cronie lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && $package_manager -y autoremove && $package_manager -y clean all" \
-                            --truncate "/etc/machine-id"
-                          if [ $? -ne 0 ]; then
-                              echo "Failed to configure CentOS $version with fallback method, skipping..."
-                              rm -f centos-${version}.qcow2
-                              continue
-                          fi
-                          echo "Successfully configured CentOS $version with firstboot installation method."
-                      else
-                          echo "Network installation succeeded for CentOS $version."
-                          # 网络安装成功后，对于 CentOS 8 进行换源
-                          if [ "$version" != "9" ]; then
-                              echo "Replacing sources with Aliyun mirrors for end users..."
-                              virt-customize --network -a centos-${version}.qcow2 \
-                                  --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
-                                  --run-command "curl -Lk https://gitee.com/SuperManito/LinuxMirrors/raw/main/ChangeMirrors.sh -o /root/ChangeMirrors.sh || true"
-                              virt-customize -a centos-${version}.qcow2 \
-                                  --run-command "chmod +x /root/ChangeMirrors.sh && bash /root/ChangeMirrors.sh --source mirrors.aliyun.com --web-protocol https --intranet false --backup true --update-software false --clean-cache false --ignore-backup-tips || true"
-                          fi
+                          continue
                       fi
                       echo "Fixing cloud-init configuration for CentOS $version..."
                       sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"

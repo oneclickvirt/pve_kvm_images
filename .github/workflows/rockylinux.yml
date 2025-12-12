@@ -56,73 +56,25 @@ jobs:
               fi
               chmod 644 rockylinux-${version}.qcow2
               echo "Customizing RockyLinux $version image"
-              
-              # 定义要安装的软件包列表
-              PACKAGES="sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,net-tools,iputils,nano,screen,less,vim,bzip2,lldpad,mtr,htop,bind-utils,zstd,cronie,lsof"
-              
-              # 配置阿里云源的函数
-              configure_rockylinux_aliyun_source() {
-                  local img=$1
-                  virt-customize -a "$img" \
-                    --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo"
-              }
-              
-              # 首先尝试使用官方源 + 网络安装
-              echo "Attempting network-based installation with official sources..."
-              network_install_result=0
-              virt-customize --network -a rockylinux-${version}.qcow2 \
+              # 配置阿里云源
+              virt-customize -a rockylinux-${version}.qcow2 \
+                --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo"
+              # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
+              virt-customize -a rockylinux-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
-                --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                 --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
                 --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg" \
                 --run-command "systemctl enable serial-getty@ttyS1.service" \
-                --update \
-                --run-command "dnf install -y epel-release" \
-                --install "$PACKAGES" \
-                --run-command "dnf -y autoremove && dnf -y clean all" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+                --firstboot-command "dnf install -y epel-release && dnf install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 lldpad mtr htop bind-utils zstd cronie lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && dnf -y autoremove && dnf -y clean all" \
                 --delete "/var/log/*.log" \
-                --delete "/var/cache/dnf/*" \
-                --truncate "/etc/machine-id" || network_install_result=$?
-              
-              if [ $network_install_result -ne 0 ]; then
-                  echo "Network installation failed, falling back to firstboot installation..."
-                  # 重新下载干净的镜像
+                --truncate "/etc/machine-id"
+              if [ $? -ne 0 ]; then
+                  echo "Failed to configure RockyLinux $version, skipping..."
                   rm -f rockylinux-${version}.qcow2
-                  axel -n 8 -o rockylinux-${version}.qcow2 "$download_url" || curl -o rockylinux-${version}.qcow2 "$download_url"
-                  if [ ! -f "rockylinux-${version}.qcow2" ] || [ $(stat -c %s "rockylinux-${version}.qcow2") -lt 10485760 ]; then
-                      echo "Failed to re-download RockyLinux $version for fallback, skipping..."
-                      continue
-                  fi
-                  chmod 644 rockylinux-${version}.qcow2
-                  
-                  # 配置阿里云源（用于 firstboot 安装）
-                  configure_rockylinux_aliyun_source "rockylinux-${version}.qcow2"
-                  
-                  # 使用 firstboot 方式安装
-                  virt-customize -a rockylinux-${version}.qcow2 \
-                    --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
-                    --timezone Asia/Hong_Kong \
-                    --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
-                    --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
-                    --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
-                    --run-command "systemctl enable serial-getty@ttyS1.service" \
-                    --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                    --firstboot-command "dnf install -y epel-release && dnf install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 lldpad mtr htop bind-utils zstd cronie lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && dnf -y autoremove && dnf -y clean all" \
-                    --truncate "/etc/machine-id"
-                  if [ $? -ne 0 ]; then
-                      echo "Failed to configure RockyLinux $version with fallback method, skipping..."
-                      rm -f rockylinux-${version}.qcow2
-                      continue
-                  fi
-                  echo "Successfully configured RockyLinux $version with firstboot installation method."
-              else
-                  echo "Network installation succeeded for RockyLinux $version."
-                  # 网络安装成功后替换为阿里云源
-                  echo "Replacing sources with Aliyun mirrors for end users..."
-                  configure_rockylinux_aliyun_source "rockylinux-${version}.qcow2"
+                  continue
               fi
               echo "Fixing cloud-init configuration for RockyLinux $version..."
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"

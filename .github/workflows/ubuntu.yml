@@ -66,99 +66,34 @@ jobs:
               # 自定义镜像
               echo "Customizing Ubuntu $version image"
               
-              # 定义要安装的软件包列表
-              PACKAGES="sudo,qemu-guest-agent,spice-vdagent,bash-completion,unzip,wget,curl,axel,net-tools,iputils-ping,iputils-arping,iputils-tracepath,nano,most,screen,less,vim,bzip2,lldpd,mtr-tiny,htop,dnsutils,zstd,cron,lsof"
+              # 配置阿里云源
+              if [ "$version" = "24.04" ] || [ "$version" = "24.10" ] || [ "$version" = "25.04" ]; then
+                  virt-customize -a ubuntu-${version}.qcow2 \
+                    --run-command "rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true" \
+                    --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/ubuntu\nSuites: ${codename} ${codename}-updates ${codename}-backports ${codename}-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources"
+              else
+                  virt-customize -a ubuntu-${version}.qcow2 \
+                    --run-command "if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then sed -i 's|URIs: http://archive.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; sed -i 's|URIs: http://security.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; fi" \
+                    --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://archive.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://security.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://ports.ubuntu.com#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
+              fi
               
-              # 配置阿里云源的函数
-              configure_ubuntu_aliyun_source() {
-                  local img=$1
-                  local ver=$2
-                  local code=$3
-                  if [ "$ver" = "24.04" ] || [ "$ver" = "24.10" ] || [ "$ver" = "25.04" ]; then
-                      virt-customize -a "$img" \
-                        --run-command "rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true" \
-                        --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/ubuntu\nSuites: ${code} ${code}-updates ${code}-backports ${code}-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources"
-                  else
-                      virt-customize -a "$img" \
-                        --run-command "if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then sed -i 's|URIs: http://archive.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; sed -i 's|URIs: http://security.ubuntu.com/ubuntu|URIs: https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; fi" \
-                        --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://archive.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://security.ubuntu.com#https://mirrors.aliyun.com#g; s#https?://ports.ubuntu.com#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
-                  fi
-              }
-              
-              # 配置官方源的函数
-              configure_ubuntu_official_source() {
-                  local img=$1
-                  local ver=$2
-                  local code=$3
-                  if [ "$ver" = "24.04" ] || [ "$ver" = "24.10" ] || [ "$ver" = "25.04" ]; then
-                      virt-customize -a "$img" \
-                        --run-command "rm -f /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/aliyun.sources 2>/dev/null || true" \
-                        --run-command "printf 'Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: ${code} ${code}-updates ${code}-backports\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: http://security.ubuntu.com/ubuntu\nSuites: ${code}-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > /etc/apt/sources.list.d/ubuntu.sources"
-                  fi
-                  # 对于旧版本，使用默认源即可
-              }
-              
-              # 首先尝试使用官方源 + 网络安装
-              echo "Attempting network-based installation with official sources..."
-              configure_ubuntu_official_source "ubuntu-${version}.qcow2" "$version" "$codename"
-              
-              network_install_result=0
-              virt-customize --network -a ubuntu-${version}.qcow2 \
+              # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
+              virt-customize -a ubuntu-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
-                --smp 2 \
+                --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/*ubuntu*.cfg || true" \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                 --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
                 --run-command "update-grub" \
                 --run-command "systemctl enable serial-getty@ttyS1.service" \
-                --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/*ubuntu*.cfg || true" \
-                --update \
-                --install "$PACKAGES" \
-                --run-command "apt-get -y autoremove --purge && apt-get -y clean" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+                --firstboot-command "apt-get update -y && apt-get install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 lldpd mtr-tiny htop dnsutils zstd cron lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && apt-get -y autoremove --purge && apt-get -y clean" \
                 --delete "/var/log/*.log" \
-                --delete "/var/lib/apt/lists/*" \
-                --delete "/var/cache/apt/*" \
-                --truncate "/etc/machine-id" || network_install_result=$?
-              
-              if [ $network_install_result -ne 0 ]; then
-                  echo "Network installation failed, falling back to firstboot installation..."
-                  # 重新下载干净的镜像
+                --truncate "/etc/machine-id"
+              if [ $? -ne 0 ]; then
+                  echo "Failed to configure Ubuntu $version, skipping..."
                   rm -f ubuntu-${version}.qcow2
-                  axel -n 8 -o ubuntu-${version}.qcow2 "$download_url" || curl -o ubuntu-${version}.qcow2 "$download_url"
-                  if [ ! -f "ubuntu-${version}.qcow2" ] || [ $(stat -c %s "ubuntu-${version}.qcow2") -lt 10485760 ]; then
-                      echo "Failed to re-download Ubuntu $version for fallback, skipping..."
-                      continue
-                  fi
-                  chmod 644 ubuntu-${version}.qcow2
-                  
-                  # 配置阿里云源（用于 firstboot 安装）
-                  configure_ubuntu_aliyun_source "ubuntu-${version}.qcow2" "$version" "$codename"
-                  
-                  # 使用 firstboot 方式安装
-                  virt-customize -a ubuntu-${version}.qcow2 \
-                    --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
-                    --run-command "sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/*ubuntu*.cfg || true" \
-                    --timezone Asia/Hong_Kong \
-                    --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
-                    --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
-                    --run-command "update-grub" \
-                    --run-command "systemctl enable serial-getty@ttyS1.service" \
-                    --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                    --firstboot-command "apt-get update -y && apt-get install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 lldpd mtr-tiny htop dnsutils zstd cron lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && apt-get -y autoremove --purge && apt-get -y clean" \
-                    --delete "/var/log/*.log" \
-                    --truncate "/etc/machine-id"
-                  if [ $? -ne 0 ]; then
-                      echo "Failed to configure Ubuntu $version with fallback method, skipping..."
-                      rm -f ubuntu-${version}.qcow2
-                      continue
-                  fi
-                  echo "Successfully configured Ubuntu $version with firstboot installation method."
-              else
-                  echo "Network installation succeeded for Ubuntu $version."
-                  # 网络安装成功后替换为阿里云源
-                  echo "Replacing sources with Aliyun mirrors for end users..."
-                  configure_ubuntu_aliyun_source "ubuntu-${version}.qcow2" "$version" "$codename"
+                  continue
               fi
               echo "Configuring SSH and root access for Ubuntu $version..."
               # SSH配置 - 启用密码认证和root登录
