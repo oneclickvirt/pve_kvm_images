@@ -71,12 +71,12 @@ jobs:
                           grub_config_path="/boot/grub2/grub.cfg"
                       fi
                       if [ "$version" != "9" ]; then
-                        virt-customize -a centos-${version}.qcow2 \
+                        virt-customize --network -a centos-${version}.qcow2 \
                             --run-command "curl -Lk https://gitee.com/SuperManito/LinuxMirrors/raw/main/ChangeMirrors.sh -o /root/ChangeMirrors.sh"
                         virt-customize -a centos-${version}.qcow2 \
                             --run-command "chmod +x /root/ChangeMirrors.sh && bash /root/ChangeMirrors.sh --source mirrors.aliyun.com --web-protocol https --intranet false --backup true --update-software false --clean-cache false --ignore-backup-tips"
                       fi
-                      virt-customize -a centos-${version}.qcow2 \
+                      virt-customize --network -a centos-${version}.qcow2 \
                         --smp 2 \
                         --timezone Asia/Hong_Kong \
                         --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \

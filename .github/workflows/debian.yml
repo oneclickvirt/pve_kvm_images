@@ -80,8 +80,8 @@ jobs:
                 --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
                 --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/debian\nSuites: ${codename} ${codename}-updates ${codename}-backports\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://mirrors.aliyun.com/debian-security\nSuites: ${codename}-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources" \
                 --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://deb.debian.org#https://mirrors.aliyun.com#g; s#https?://security.debian.org#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
-              # 继续自定义镜像
-              virt-customize -a debian-${version}.qcow2 \
+              # 继续自定义镜像（需要网络）
+              virt-customize --network -a debian-${version}.qcow2 \
                 --smp 2 \
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \

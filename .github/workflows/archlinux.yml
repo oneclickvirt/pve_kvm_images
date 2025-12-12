@@ -92,7 +92,7 @@ jobs:
           sleep 5
           
           echo "Customizing Arch Linux image - Phase 3~6: Pacman Keys & Update"
-          virt-customize -a archlinux-expanded.qcow2 \
+          virt-customize --network -a archlinux-expanded.qcow2 \
             --run-command "pacman-key --init" \
             --run-command "pacman-key --populate archlinux" \
             --run-command "pacman -Sy --noconfirm archlinux-keyring" \
@@ -108,7 +108,7 @@ jobs:
           fi
           
           echo "Installing essential packages..."
-          virt-customize -a archlinux-expanded.qcow2 \
+          virt-customize --network -a archlinux-expanded.qcow2 \
             --run-command "pacman -S --noconfirm cloud-guest-utils qemu-guest-agent" \
             --run-command "sync"
           if [ $? -ne 0 ]; then
@@ -118,7 +118,7 @@ jobs:
           fi
           
           echo "Installing additional packages..."
-          virt-customize -a archlinux-expanded.qcow2 \
+          virt-customize --network -a archlinux-expanded.qcow2 \
             --run-command "pacman -S --noconfirm sudo spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof" \
             --run-command "sync"
           if [ $? -ne 0 ]; then
