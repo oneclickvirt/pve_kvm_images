@@ -125,6 +125,11 @@ jobs:
                       virt-customize -a alpine-${version}.qcow2 \
                         --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories" \
                         --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories"
+                      if [ $? -ne 0 ]; then
+                          echo "Failed to configure sources for Alpine $version, skipping..."
+                          rm -f alpine-${version}.qcow2
+                          continue
+                      fi
                       # 继续自定义镜像（需要网络）
                       virt-customize --network -a alpine-${version}.qcow2 \
                         --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \

@@ -74,11 +74,18 @@ jobs:
                         virt-customize --network -a centos-${version}.qcow2 \
                             --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
                             --run-command "curl -Lk https://gitee.com/SuperManito/LinuxMirrors/raw/main/ChangeMirrors.sh -o /root/ChangeMirrors.sh"
+                        if [ $? -ne 0 ]; then
+                            echo "Failed to download mirror script for CentOS $version, skipping..."
+                            rm -f centos-${version}.qcow2
+                            continue
+                        fi
                         virt-customize -a centos-${version}.qcow2 \
                             --run-command "chmod +x /root/ChangeMirrors.sh && bash /root/ChangeMirrors.sh --source mirrors.aliyun.com --web-protocol https --intranet false --backup true --update-software false --clean-cache false --ignore-backup-tips"
-                      else
-                        # CentOS 9 不需要单独配置，DNS 将在网络命令中配置
-                        :
+                        if [ $? -ne 0 ]; then
+                            echo "Failed to configure sources for CentOS $version, skipping..."
+                            rm -f centos-${version}.qcow2
+                            continue
+                        fi
                       fi
                       virt-customize --network -a centos-${version}.qcow2 \
                         --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \

@@ -80,6 +80,11 @@ jobs:
                 --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
                 --run-command "printf 'Types: deb\nURIs: https://mirrors.aliyun.com/debian\nSuites: ${codename} ${codename}-updates ${codename}-backports\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://mirrors.aliyun.com/debian-security\nSuites: ${codename}-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/aliyun.sources" \
                 --run-command "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \"\$f\" ] && sed -i -E 's#https?://deb.debian.org#https://mirrors.aliyun.com#g; s#https?://security.debian.org#https://mirrors.aliyun.com#g' \"\$f\"; done || true"
+              if [ $? -ne 0 ]; then
+                  echo "Failed to configure sources for Debian $version, skipping..."
+                  rm -f debian-${version}.qcow2
+                  continue
+              fi
               # 继续自定义镜像（需要网络）
               virt-customize --network -a debian-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \

@@ -60,6 +60,11 @@ jobs:
               # 先替换为阿里云镜像源
               virt-customize -a almalinux-${version}.qcow2 \
                 --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^# *baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/almalinux*.repo"
+              if [ $? -ne 0 ]; then
+                  echo "Failed to configure sources for Almalinux $version, skipping..."
+                  rm -f almalinux-${version}.qcow2
+                  continue
+              fi
               # 继续自定义镜像（需要网络）
               virt-customize --network -a almalinux-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 223.5.5.5' >> /etc/resolv.conf" \
