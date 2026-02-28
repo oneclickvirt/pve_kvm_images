@@ -8,8 +8,9 @@ date=$(date)
 system_names=()
 echo "$date" >>log
 echo "------------------------------------------" >>log
+core=${core:-2}
 release_names=("ubuntu" "debian" "kali" "centos" "almalinux" "rockylinux" "fedora" "opensuse" "alpine" "archlinux" "gentoo" "openwrt" "oracle" "openeuler")
-response=$($(curl -s -m 6 https://down.idc.wiki/Image/realServer-Template/current/qcow2/ | grep -o '<a href="[^"]*">' | awk -F'"' '{print $2}' | sed -n '/qcow2$/s#/Image/realServer-Template/current/qcow2/##p'))
+response=$(curl -s -m 6 https://down.idc.wiki/Image/realServer-Template/current/qcow2/ | grep -o '<a href="[^"]*">' | awk -F'"' '{print $2}' | sed -n '/qcow2$/s#/Image/realServer-Template/current/qcow2/##p')
 if [ $? -eq 0 ] && [ -n "$response" ]; then
     system_names+=($(echo "$response"))
 fi
@@ -28,8 +29,10 @@ for ((i = 0; i < ${#release_names[@]}; i++)); do
     for image in "${temp_images[@]}"; do
         echo "$image"
         echo "$image" >>log
+        qm stop 102 --skiplock 2>/dev/null || true
+        qm destroy 102 --purge 2>/dev/null || true
         qm create 102 --agent 1 --scsihw virtio-scsi-single --serial0 socket --cores $core --sockets 1 --cpu host --net0 virtio,bridge=vmbr1,firewall=0
-        qm importdisk 102 /root/qcow/${image} local
+        qm importdisk 102 ${image} local
         raw_name=$(ls /var/lib/vz/images/102/*.raw | xargs -n1 basename | tail -n 1)
         if [ -n "$raw_name" ]; then
             qm set 102 --scsihw virtio-scsi-pci --scsi0 local:102/${raw_name}
@@ -62,23 +65,19 @@ for ((i = 0; i < ${#release_names[@]}; i++)); do
         else
             echo "no public network" >>log
         fi
-        pct stop 102
+        qm stop 102
         sleep 30
-        if [ $? -eq 0 ]; then
-            pct start 102
-            sleep 15
-            echo "nameserver 8.8.8.8" | qm guest exec 102 -- tee -a /etc/resolv.conf
-            res5=$(qm guest exec 102 curl https://raw.githubusercontent.com/spiritLHLS/ecs/main/back/test)
-            if [[ $res5 == *"success"* ]]; then
-                echo "reboot success"
-            else
-                echo "reboot failed" >>log
-            fi
+        qm start 102
+        sleep 15
+        echo "nameserver 8.8.8.8" | qm guest exec 102 -- tee -a /etc/resolv.conf
+        res5=$(qm guest exec 102 curl https://raw.githubusercontent.com/spiritLHLS/ecs/main/back/test)
+        if [[ $res5 == *"success"* ]]; then
+            echo "reboot success"
         else
             echo "reboot failed" >>log
         fi
-        pct stop 102
-        pct destroy 102
+        qm stop 102
+        qm destroy 102
         rm -rf $image
         echo "------------------------------------------" >>log
     done
