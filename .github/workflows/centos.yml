@@ -51,12 +51,11 @@ jobs:
                       # elif [ "$version" = "7" ]; then
                       #     download_url="https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2"
                       fi
-                      axel -n 8 -o centos-${version}.qcow2 "$download_url"
-                      if [ $? -ne 0 ]; then
+                      if ! axel -n 8 -o centos-${version}.qcow2 "$download_url" 2>/dev/null; then
                           echo "Axel failed, trying with curl"
-                          curl -o centos-${version}.qcow2 "$download_url"
-                          if [ $? -ne 0 ]; then
+                          if ! curl -L --retry 3 --retry-delay 5 -o centos-${version}.qcow2 "$download_url"; then
                               echo "Failed to download CentOS $version, skipping..."
+                              rm -f centos-${version}.qcow2
                               continue
                           fi
                       fi
@@ -75,25 +74,25 @@ jobs:
                           grub_config_path="/boot/grub2/grub.cfg"
                       fi
                       
-                      # 对于 CentOS 8，配置阿里云源
+                      # 对于 CentOS 8，配置阿里云源（EOL 后使用 vault 作备用）
                       if [ "$version" != "9" ]; then
                         virt-customize -a centos-${version}.qcow2 \
-                          --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^#baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo || true"
+                          --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^#baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo 2>/dev/null || true" \
+                          --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|http://vault.centos.org|https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo 2>/dev/null || true"
                       fi
                       
                       # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
-                      virt-customize -a centos-${version}.qcow2 \
+                      if ! virt-customize -a centos-${version}.qcow2 \
                         --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                         --timezone Asia/Hong_Kong \
                         --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                         --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
-                        --run-command "grub2-mkconfig -o $grub_config_path" \
-                        --run-command "systemctl enable serial-getty@ttyS1.service" \
+                        --run-command "grub2-mkconfig -o $grub_config_path || true" \
+                        --run-command "systemctl enable serial-getty@ttyS1.service || true" \
                         --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                        --firstboot-command "$package_manager install -y epel-release && $package_manager install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 lldpad mtr htop bind-utils zstd cronie lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && $package_manager -y autoremove && $package_manager -y clean all" \
+                        --firstboot-command "($package_manager install -y epel-release --allowerasing || $package_manager install -y epel-release || true) && $package_manager install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof && ($package_manager install -y spice-vdagent lldpad || true) && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && $package_manager -y autoremove && $package_manager -y clean all || true" \
                         --delete "/var/log/*.log" \
-                        --truncate "/etc/machine-id"
-                      if [ $? -ne 0 ]; then
+                        --truncate "/etc/machine-id"; then
                           echo "Failed to configure CentOS $version, skipping..."
                           rm -f centos-${version}.qcow2
                           continue
@@ -106,13 +105,13 @@ jobs:
                       echo "Configuring SSH and root access for CentOS $version..."
                       if [[ "$version" == "9" ]]; then
                           echo "Applying CentOS 9 specific SSH configuration..."
-                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "systemctl enable sshd"
+                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "systemctl enable sshd || true"
                           sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \; 2>/dev/null || true"
                           sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \; 2>/dev/null || true"
                           sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \; 2>/dev/null || true"
                       else
                           echo "Applying CentOS 8 specific SSH configuration..."
-                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "systemctl enable sshd"
+                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "systemctl enable sshd || true"
                       fi
                       sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
                       sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
@@ -131,18 +130,17 @@ jobs:
                       sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "echo 'Default root password: oneclickvirt' >> /etc/motd"
                       sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
                       echo "Applying security and performance tweaks for CentOS $version..."
-                      sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "systemctl enable crond"
+                      sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "systemctl enable crond || true"
                       if [[ "$version" == "9" ]]; then
-                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "dnf clean all"
+                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "dnf clean all || true"
                       else
-                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "yum clean all"
+                          sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "yum clean all || true"
                       fi
                       sudo virt-customize -v -x -a centos-${version}.qcow2 --run-command "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
                       echo "Creating backup and finalizing CentOS $version image"
                       cp centos-${version}.qcow2 centos-${version}.qcow2.bak
                       echo "Compressing CentOS $version image"
-                      virt-sparsify --compress centos-${version}.qcow2 centos-${version}-custom.qcow2
-                      if [ $? -ne 0 ]; then
+                      if ! virt-sparsify --compress centos-${version}.qcow2 centos-${version}-custom.qcow2; then
                           echo "Failed to compress CentOS $version image, skipping..."
                           rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2 centos-${version}.qcow2.bak
                           continue

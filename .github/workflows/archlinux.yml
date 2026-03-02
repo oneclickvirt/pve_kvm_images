@@ -39,53 +39,77 @@ jobs:
           echo "=== Processing Arch Linux ==="
           rm -f archlinux.qcow2 archlinux-custom.qcow2 archlinux-latest.qcow2
           echo "Downloading Arch Linux Cloud Image"
-          download_url="https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"
-          axel -n 8 -o archlinux.qcow2 "$download_url"
-          if [ $? -ne 0 ]; then
-              echo "Axel failed, trying with curl"
-              curl -o archlinux.qcow2 "$download_url"
-              if [ $? -ne 0 ]; then
-                  echo "Failed to download Arch Linux, exiting..."
-                  exit 1
-              fi
-          fi
-          if [ ! -f "archlinux.qcow2" ] || [ $(stat -c %s "archlinux.qcow2") -lt 10485760 ]; then
-              echo "Download failed or file too small for Arch Linux, exiting..."
+          download_success=0
+          for download_url in \
+              "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+              "https://europe.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+              "https://america.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+              "https://asia.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+              "https://mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"; do
+              echo "Trying mirror: $download_url"
               rm -f archlinux.qcow2
+              if axel -n 8 -o archlinux.qcow2 "$download_url" 2>/dev/null; then
+                  :
+              else
+                  curl -L --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 300 -o archlinux.qcow2 "$download_url" 2>/dev/null || true
+              fi
+              if [ -f "archlinux.qcow2" ] && [ $(stat -c %s "archlinux.qcow2") -gt 10485760 ]; then
+                  echo "Successfully downloaded from: $download_url"
+                  download_success=1
+                  break
+              fi
+              rm -f archlinux.qcow2
+          done
+          if [ $download_success -ne 1 ]; then
+              echo "Failed to download Arch Linux from all mirrors, exiting..."
               exit 1
           fi
           chmod 644 archlinux.qcow2
-          # 先检查镜像信息
+          # 先检查镜像信息并动态检测根分区
           echo "Checking image info..."
-          virt-filesystems -a archlinux.qcow2 --long -h --uuid
-          echo "Resizing Arch Linux image..."
-          qemu-img resize archlinux.qcow2 +2G
-          echo "Creating expanded image with proper partition resizing..."
-          qemu-img create -f qcow2 archlinux-expanded.qcow2 4G
-          virt-resize --expand /dev/sda3 archlinux.qcow2 archlinux-expanded.qcow2
-          if [ $? -ne 0 ]; then
-              echo "virt-resize failed, trying alternative approach..."
-              cp archlinux.qcow2 archlinux-expanded.qcow2
-              qemu-img resize archlinux-expanded.qcow2 +2G
+          virt-filesystems -a archlinux.qcow2 --long -h --uuid || true
+          echo "Detecting root partition..."
+          root_part=$(virt-filesystems -a archlinux.qcow2 --filesystems --long 2>/dev/null | awk '/ext4|btrfs|xfs/{print $1}' | tail -1 || echo "")
+          if [ -z "$root_part" ]; then
+              root_part="/dev/sda3"
+              echo "Could not detect root partition automatically, using default: $root_part"
+          else
+              echo "Detected root partition: $root_part"
+          fi
+          echo "Creating expanded image..."
+          qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
+          echo "Resizing partitions into expanded image..."
+          if virt-resize --expand "$root_part" archlinux.qcow2 archlinux-expanded.qcow2; then
+              echo "virt-resize succeeded"
+          else
+              echo "virt-resize failed with $root_part, trying /dev/sda2 as fallback..."
+              rm -f archlinux-expanded.qcow2
+              qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
+              if virt-resize --expand /dev/sda2 archlinux.qcow2 archlinux-expanded.qcow2; then
+                  echo "virt-resize succeeded with /dev/sda2"
+              else
+                  echo "virt-resize failed, falling back to direct copy+resize..."
+                  rm -f archlinux-expanded.qcow2
+                  cp archlinux.qcow2 archlinux-expanded.qcow2
+                  qemu-img resize archlinux-expanded.qcow2 +3G
+              fi
           fi
           echo "Customizing Arch Linux image - Phase 1: Basic Setup"
-          virt-customize -a archlinux-expanded.qcow2 \
+          if ! virt-customize -a archlinux-expanded.qcow2 \
             --smp 1 \
             --timezone Asia/Hong_Kong \
             --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
-            --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true"
-          if [ $? -ne 0 ]; then
+            --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true"; then
               echo "Failed to setup basic configuration, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
           
           echo "Customizing Arch Linux image - Phase 2: GRUB and Services"
-          virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "grub-mkconfig -o /boot/grub/grub.cfg" \
-            --run-command "systemctl enable serial-getty@ttyS1.service" \
-            --run-command "sync"
-          if [ $? -ne 0 ]; then
+          if ! virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "grub-mkconfig -o /boot/grub/grub.cfg || grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
+            --run-command "systemctl enable serial-getty@ttyS1.service || true" \
+            --run-command "sync"; then
               echo "Failed to configure GRUB and services, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
@@ -94,26 +118,25 @@ jobs:
           
           echo "Customizing Arch Linux image - Phase 3: Package configuration"
           # 配置阿里云源
-          virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist" \
-            --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
+          if ! virt-customize -a archlinux-expanded.qcow2 \
+            --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist || true" \
+            --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf || true" \
             --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-            --firstboot-command "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm && pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo spice-vdagent bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop bind zstd cronie lsof openssh && systemctl enable qemu-guest-agent && systemctl enable sshd && pacman -Scc --noconfirm"
-          if [ $? -ne 0 ]; then
+            --firstboot-command "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm && pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh && (pacman -S --noconfirm spice-vdagent bind bind-tools || true) && systemctl enable qemu-guest-agent && systemctl enable sshd && pacman -Scc --noconfirm || true"; then
               echo "Failed to configure Arch Linux, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
           fi
           echo "Configuring SSH and root access for Arch Linux..."
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "systemctl enable sshd"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "systemctl enable sshd || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config || true"
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config || true"
           echo "Configuring qemu-guest-agent for Arch Linux..."
           echo "Setting root password and MOTD for Arch Linux..."
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
@@ -122,8 +145,7 @@ jobs:
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
           echo "Compressing Arch Linux image"
-          virt-sparsify --compress archlinux-expanded.qcow2 archlinux-custom.qcow2
-          if [ $? -ne 0 ]; then
+          if ! virt-sparsify --compress archlinux-expanded.qcow2 archlinux-custom.qcow2; then
               echo "Failed to compress Arch Linux image, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-custom.qcow2
               exit 1

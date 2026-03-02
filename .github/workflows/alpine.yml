@@ -44,7 +44,10 @@ jobs:
                       local version=$1
                       local base_url="https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/"
                       echo "Fetching directory listing for Alpine $version..." >&2
-                      timestamps=$(curl -s "$base_url" | grep -o '[0-9]\{8\}_[0-9]\{2\}%3A[0-9]\{2\}' | sort -r | head -10)
+                      local raw_html
+                      raw_html=$(curl -s --connect-timeout 15 --max-time 30 "$base_url" 2>/dev/null) || raw_html=""
+                      # Handle both URL-encoded (%3A) and literal colon forms
+                      timestamps=$(echo "$raw_html" | grep -oE '[0-9]{8}_[0-9]{2}(%3A|:)[0-9]{2}' | sed -E 's/([0-9]{8}_[0-9]{2}):([0-9]{2})/\1%3A\2/g' | sort -r | head -10)
                       if [ -n "$timestamps" ]; then
                           for timestamp in $timestamps; do
                               test_url="${base_url}${timestamp}/disk.qcow2"
@@ -57,9 +60,9 @@ jobs:
                       fi
                       echo "No timestamps found from listing, trying alternative method..." >&2
                       current_date=$(date +%Y%m%d)
-                      for days_back in {0..7}; do
+                      for days_back in {0..14}; do
                           test_date=$(date -d "$current_date -$days_back days" +%Y%m%d)
-                          for hour in 13 12 11 10 09 08 07 06; do
+                          for hour in 13 12 11 10 09 08 07 06 05 14 15 16 17 18; do
                               for minute in 00 30; do
                                   timestamp="${test_date}_${hour}%3A${minute}"
                                   test_url="${base_url}${timestamp}/disk.qcow2"
@@ -78,8 +81,8 @@ jobs:
                       local version=$1
                       local output_file=$2
                       echo "Getting latest timestamp for Alpine $version..."
-                      timestamp=$(get_latest_timestamp "$version")
-                      if [ $? -ne 0 ] || [ -z "$timestamp" ]; then
+                      timestamp=$(get_latest_timestamp "$version" || echo "")
+                      if [ -z "$timestamp" ]; then
                           echo "Failed to get valid timestamp for Alpine $version"
                           return 1
                       fi
@@ -126,31 +129,30 @@ jobs:
                       echo "Customizing Alpine $version image"
                       # 配置阿里云源
                       virt-customize -a alpine-${version}.qcow2 \
-                        --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories" \
-                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories"
+                        --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories || true" \
+                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories || true"
                       # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
-                      virt-customize -a alpine-${version}.qcow2 \
+                      if ! virt-customize -a alpine-${version}.qcow2 \
                         --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                         --timezone Asia/Hong_Kong \
                         --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
                         --firstboot-command "apk update && apk upgrade && apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc && echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent && echo 'name=\"QEMU Guest Agent\"' >> /etc/init.d/qemu-guest-agent && echo 'command=\"/usr/bin/qemu-ga\"' >> /etc/init.d/qemu-guest-agent && echo 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent && echo 'pidfile=\"/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent && echo 'depend() { need localmount; after bootmisc; }' >> /etc/init.d/qemu-guest-agent && chmod +x /etc/init.d/qemu-guest-agent && rc-update add qemu-guest-agent boot && rc-update add sshd boot && apk cache clean || true" \
                         --delete "/var/log/*.log" \
-                        --delete "/var/cache/apk/*"
-                      if [ $? -ne 0 ]; then
+                        --delete "/var/cache/apk/*"; then
                           echo "Failed to configure Alpine $version, skipping..."
                           rm -f alpine-${version}.qcow2
                           continue
                       fi
                       
                       echo "Configuring SSH and root access for Alpine $version..."
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add sshd boot"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add sshd boot || true"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config || true"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config || true"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config || true"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config || true"
+                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config || true"
                       
                       echo "Configuring qemu-guest-agent for Alpine $version..."
                       
@@ -162,8 +164,7 @@ jobs:
                       sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
                       
                       echo "Compressing Alpine $version image"
-                      virt-sparsify --compress alpine-${version}.qcow2 alpine-${version}-custom.qcow2
-                      if [ $? -ne 0 ]; then
+                      if ! virt-sparsify --compress alpine-${version}.qcow2 alpine-${version}-custom.qcow2; then
                           echo "Failed to compress Alpine $version image, skipping..."
                           rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2
                           continue

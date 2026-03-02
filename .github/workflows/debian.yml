@@ -48,12 +48,11 @@ jobs:
               # 下载镜像
               echo "Downloading Debian $version Cloud Image"
               download_url="https://cdimage.debian.org/images/cloud/${codename}/latest/debian-${version}-genericcloud-amd64.qcow2"
-              axel -n 8 -o debian-${version}.qcow2 "$download_url"
-              if [ $? -ne 0 ]; then
+              if ! axel -n 8 -o debian-${version}.qcow2 "$download_url" 2>/dev/null; then
                   echo "Axel failed, trying with curl"
-                  curl -o debian-${version}.qcow2 "$download_url"
-                  if [ $? -ne 0 ]; then
+                  if ! curl -L --retry 3 --retry-delay 5 -o debian-${version}.qcow2 "$download_url"; then
                       echo "Failed to download Debian $version, skipping..."
+                      rm -f debian-${version}.qcow2
                       continue
                   fi
               fi
@@ -78,7 +77,7 @@ jobs:
                   codename="bookworm"
               fi
               # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
-              virt-customize -a debian-${version}.qcow2 \
+              if ! virt-customize -a debian-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                 --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
                 --run-command "printf 'Types: deb\nURIs: https://deb.debian.org/debian\nSuites: ${codename} ${codename}-updates ${codename}-backports\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://deb.debian.org/debian-security\nSuites: ${codename}-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources" \
@@ -87,21 +86,20 @@ jobs:
                 --timezone Asia/Hong_Kong \
                 --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
                 --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
-                --run-command "update-grub" \
-                --run-command "systemctl enable serial-getty@ttyS1.service" \
+                --run-command "update-grub || update-grub2 || true" \
+                --run-command "systemctl enable serial-getty@ttyS1.service || true" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                --firstboot-command "apt-get update -y && apt-get install -y sudo qemu-guest-agent spice-vdagent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 lldpd mtr-tiny htop dnsutils zstd cron lsof && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && apt-get -y autoremove --purge && apt-get -y clean" \
+                --firstboot-command "apt-get update -y && apt-get install -y sudo qemu-guest-agent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 mtr-tiny htop dnsutils zstd cron lsof && (apt-get install -y spice-vdagent lldpd || true) && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && apt-get -y autoremove --purge && apt-get -y clean || true" \
                 --delete "/var/log/*.log" \
-                --truncate "/etc/machine-id"
-              if [ $? -ne 0 ]; then
+                --truncate "/etc/machine-id"; then
                   echo "Failed to configure Debian $version, skipping..."
                   rm -f debian-${version}.qcow2
                   continue
               fi
               echo "Configuring SSH and root access for Debian $version..."
               # SSH配置 - 启用密码认证和root登录
-              sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-              sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "systemctl enable ssh"
+              sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg || true"
+              sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "systemctl enable ssh || true"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
@@ -119,8 +117,7 @@ jobs:
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
               # 压缩镜像
               echo "Compressing Debian $version image"
-              virt-sparsify --compress debian-${version}.qcow2 debian-${version}-custom.qcow2
-              if [ $? -ne 0 ]; then
+              if ! virt-sparsify --compress debian-${version}.qcow2 debian-${version}-custom.qcow2; then
                   echo "Failed to compress Debian $version image, skipping..."
                   rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2
                   continue
