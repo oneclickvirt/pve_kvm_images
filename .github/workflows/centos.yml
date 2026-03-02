@@ -78,10 +78,10 @@ jobs:
                       if [ "$version" != "9" ]; then
                         virt-customize -a centos-${version}.qcow2 \
                           --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^#baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo 2>/dev/null || true" \
-                          --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|http://vault.centos.org|https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo 2>/dev/null || true"
+                          --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|http://vault.centos.org|https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo 2>/dev/null || true" || true
                       fi
                       
-                      # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
+                      # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
                       if ! virt-customize -a centos-${version}.qcow2 \
                         --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                         --timezone Asia/Hong_Kong \
@@ -90,7 +90,11 @@ jobs:
                         --run-command "grub2-mkconfig -o $grub_config_path || true" \
                         --run-command "systemctl enable serial-getty@ttyS1.service || true" \
                         --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                        --firstboot-command "($package_manager install -y epel-release --allowerasing || $package_manager install -y epel-release || true) && $package_manager install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof && ($package_manager install -y spice-vdagent lldpad || true) && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && $package_manager -y autoremove && $package_manager -y clean all || true" \
+                        --run-command "($package_manager install -y epel-release --allowerasing || $package_manager install -y epel-release || true)" \
+                        --run-command "$package_manager install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || true" \
+                        --run-command "($package_manager install -y spice-vdagent lldpad || true)" \
+                        --run-command "systemctl enable qemu-guest-agent || true" \
+                        --run-command "$package_manager -y autoremove && $package_manager -y clean all || true" \
                         --delete "/var/log/*.log" \
                         --truncate "/etc/machine-id"; then
                           echo "Failed to configure CentOS $version, skipping..."
@@ -140,7 +144,7 @@ jobs:
                       echo "Creating backup and finalizing CentOS $version image"
                       cp centos-${version}.qcow2 centos-${version}.qcow2.bak
                       echo "Compressing CentOS $version image"
-                      if ! virt-sparsify --compress centos-${version}.qcow2 centos-${version}-custom.qcow2; then
+                      if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore centos-${version}.qcow2 centos-${version}-custom.qcow2; then
                           echo "Failed to compress CentOS $version image, skipping..."
                           rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2 centos-${version}.qcow2.bak
                           continue

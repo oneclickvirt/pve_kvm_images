@@ -130,13 +130,24 @@ jobs:
                       # 配置阿里云源
                       virt-customize -a alpine-${version}.qcow2 \
                         --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories || true" \
-                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories || true"
-                      # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
+                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories || true" || true
+                      # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
                       if ! virt-customize -a alpine-${version}.qcow2 \
                         --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                         --timezone Asia/Hong_Kong \
                         --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
-                        --firstboot-command "apk update && apk upgrade && apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc && echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent && echo 'name=\"QEMU Guest Agent\"' >> /etc/init.d/qemu-guest-agent && echo 'command=\"/usr/bin/qemu-ga\"' >> /etc/init.d/qemu-guest-agent && echo 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent && echo 'pidfile=\"/run/qemu-guest-agent.pid\"' >> /etc/init.d/qemu-guest-agent && echo 'depend() { need localmount; after bootmisc; }' >> /etc/init.d/qemu-guest-agent && chmod +x /etc/init.d/qemu-guest-agent && rc-update add qemu-guest-agent boot && rc-update add sshd boot && apk cache clean || true" \
+                        --run-command "apk update && apk upgrade || true" \
+                        --run-command "apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc || true" \
+                        --run-command "echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent" \
+                        --run-command "echo 'name=QEMU Guest Agent' >> /etc/init.d/qemu-guest-agent" \
+                        --run-command "echo 'command=/usr/bin/qemu-ga' >> /etc/init.d/qemu-guest-agent" \
+                        --run-command "printf 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"\n' >> /etc/init.d/qemu-guest-agent" \
+                        --run-command "echo 'pidfile=/run/qemu-guest-agent.pid' >> /etc/init.d/qemu-guest-agent" \
+                        --run-command "printf 'depend() { need localmount; after bootmisc; }\n' >> /etc/init.d/qemu-guest-agent" \
+                        --run-command "chmod +x /etc/init.d/qemu-guest-agent" \
+                        --run-command "rc-update add qemu-guest-agent boot || true" \
+                        --run-command "rc-update add sshd boot || true" \
+                        --run-command "apk cache clean || true" \
                         --delete "/var/log/*.log" \
                         --delete "/var/cache/apk/*"; then
                           echo "Failed to configure Alpine $version, skipping..."
@@ -164,7 +175,7 @@ jobs:
                       sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
                       
                       echo "Compressing Alpine $version image"
-                      if ! virt-sparsify --compress alpine-${version}.qcow2 alpine-${version}-custom.qcow2; then
+                      if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore alpine-${version}.qcow2 alpine-${version}-custom.qcow2; then
                           echo "Failed to compress Alpine $version image, skipping..."
                           rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2
                           continue

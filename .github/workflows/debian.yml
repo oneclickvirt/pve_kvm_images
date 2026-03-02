@@ -76,7 +76,7 @@ jobs:
               else
                   codename="bookworm"
               fi
-              # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
+              # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
               if ! virt-customize -a debian-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                 --run-command "rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true" \
@@ -89,7 +89,11 @@ jobs:
                 --run-command "update-grub || update-grub2 || true" \
                 --run-command "systemctl enable serial-getty@ttyS1.service || true" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                --firstboot-command "apt-get update -y && apt-get install -y sudo qemu-guest-agent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 mtr-tiny htop dnsutils zstd cron lsof && (apt-get install -y spice-vdagent lldpd || true) && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && apt-get -y autoremove --purge && apt-get -y clean || true" \
+                --run-command "apt-get update -y || true" \
+                --run-command "apt-get install -y sudo qemu-guest-agent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 mtr-tiny htop dnsutils zstd cron lsof || true" \
+                --run-command "(apt-get install -y spice-vdagent lldpd || true)" \
+                --run-command "systemctl enable qemu-guest-agent || true" \
+                --run-command "apt-get -y autoremove --purge && apt-get -y clean || true" \
                 --delete "/var/log/*.log" \
                 --truncate "/etc/machine-id"; then
                   echo "Failed to configure Debian $version, skipping..."
@@ -117,7 +121,7 @@ jobs:
               sudo virt-customize -v -x -a debian-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
               # 压缩镜像
               echo "Compressing Debian $version image"
-              if ! virt-sparsify --compress debian-${version}.qcow2 debian-${version}-custom.qcow2; then
+              if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore debian-${version}.qcow2 debian-${version}-custom.qcow2; then
                   echo "Failed to compress Debian $version image, skipping..."
                   rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2
                   continue

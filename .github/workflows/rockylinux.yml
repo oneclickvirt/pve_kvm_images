@@ -61,8 +61,8 @@ jobs:
               echo "Customizing RockyLinux $version image"
               # 配置阿里云源
               virt-customize -a rockylinux-${version}.qcow2 \
-                --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^#baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo 2>/dev/null || true"
-              # 配置镜像（不需要网络）- 使用 firstboot 在首次启动时安装软件包
+                --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^#baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo 2>/dev/null || true" || true
+              # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
               if ! virt-customize -a rockylinux-${version}.qcow2 \
                 --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
                 --timezone Asia/Hong_Kong \
@@ -71,7 +71,11 @@ jobs:
                 --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
                 --run-command "systemctl enable serial-getty@ttyS1.service || true" \
                 --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                --firstboot-command "(dnf install -y epel-release --allowerasing || dnf install -y epel-release || true) && dnf install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof && (dnf install -y spice-vdagent lldpad || true) && systemctl enable qemu-guest-agent && systemctl start qemu-guest-agent && dnf -y autoremove && dnf -y clean all || true" \
+                --run-command "(dnf install -y epel-release --allowerasing || dnf install -y epel-release || true)" \
+                --run-command "dnf install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || true" \
+                --run-command "(dnf install -y spice-vdagent lldpad || true)" \
+                --run-command "systemctl enable qemu-guest-agent || true" \
+                --run-command "dnf -y autoremove && dnf -y clean all || true" \
                 --delete "/var/log/*.log" \
                 --truncate "/etc/machine-id"; then
                   echo "Failed to configure RockyLinux $version, skipping..."
@@ -121,7 +125,7 @@ jobs:
               echo "Creating backup and finalizing RockyLinux $version image"
               cp rockylinux-${version}.qcow2 rockylinux-${version}.qcow2.bak
               echo "Compressing RockyLinux $version image"
-              if ! virt-sparsify --compress rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2; then
+              if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2; then
                   echo "Failed to compress RockyLinux $version image, skipping..."
                   rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux-${version}.qcow2.bak
                   continue

@@ -117,12 +117,20 @@ jobs:
           sleep 5
           
           echo "Customizing Arch Linux image - Phase 3: Package configuration"
-          # 配置阿里云源
+          # 配置阿里云源并预装软件包（编译阶段完成，减少首次启动时间）
           if ! virt-customize -a archlinux-expanded.qcow2 \
             --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist || true" \
             --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf || true" \
             --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-            --firstboot-command "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm && pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh && (pacman -S --noconfirm spice-vdagent bind bind-tools || true) && systemctl enable qemu-guest-agent && systemctl enable sshd && pacman -Scc --noconfirm || true"; then
+            --run-command "pacman-key --init || true" \
+            --run-command "pacman-key --populate archlinux || true" \
+            --run-command "pacman -Sy --noconfirm archlinux-keyring || true" \
+            --run-command "pacman -Syu --noconfirm || true" \
+            --run-command "pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh || true" \
+            --run-command "(pacman -S --noconfirm spice-vdagent bind bind-tools || true)" \
+            --run-command "systemctl enable qemu-guest-agent || true" \
+            --run-command "systemctl enable sshd || true" \
+            --run-command "pacman -Scc --noconfirm || true"; then
               echo "Failed to configure Arch Linux, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2
               exit 1
@@ -145,7 +153,7 @@ jobs:
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
           echo "Compressing Arch Linux image"
-          if ! virt-sparsify --compress archlinux-expanded.qcow2 archlinux-custom.qcow2; then
+          if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore archlinux-expanded.qcow2 archlinux-custom.qcow2; then
               echo "Failed to compress Arch Linux image, exiting..."
               rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-custom.qcow2
               exit 1
