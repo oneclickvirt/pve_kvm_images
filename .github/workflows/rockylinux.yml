@@ -122,6 +122,8 @@ jobs:
                   sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "yum clean all || true"
               fi
               sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
+              # 安全加固：禁用algif_aead模块（CVE防护）
+              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
               echo "Creating backup and finalizing RockyLinux $version image"
               cp rockylinux-${version}.qcow2 rockylinux-${version}.qcow2.bak
               echo "Compressing RockyLinux $version image"

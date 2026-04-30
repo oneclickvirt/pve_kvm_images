@@ -197,6 +197,10 @@ if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* || "$qcow_file" =
         echo "安装qemu-guest-agent..."
         sudo virt-customize -v -x -a "$qcow_file" --run-command "apt-get install qemu-guest-agent -y || true"
         sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
+        echo "清理apt缓存..."
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "apt-get autoremove -y || true"
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "apt-get clean || true"
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "rm -rf /var/lib/apt/lists/* || true"
     elif [[ "$qcow_file" == *"arch"* ]]; then
         vc_mirror_pacman_aliyun_and_update
         sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -S --noconfirm --needed sudo"
@@ -207,6 +211,8 @@ if [[ "$qcow_file" == *"debian"* || "$qcow_file" == *"ubuntu"* || "$qcow_file" =
         echo "安装qemu-guest-agent..."
         sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -S --noconfirm --needed qemu-guest-agent || true"
         sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
+        echo "清理pacman缓存..."
+        sudo virt-customize -v -x -a "$qcow_file" --run-command "pacman -Scc --noconfirm || true"
     fi
 elif [[ "$qcow_file" == *"alpine"* ]]; then
     echo "处理Alpine系统..."
@@ -233,6 +239,9 @@ elif [[ "$qcow_file" == *"alpine"* ]]; then
     sudo virt-customize -v -x -a "$qcow_file" --edit '/etc/ssh/sshd_config:s/^#*AddressFamily.*/AddressFamily any/'
     sudo virt-customize -v -x -a "$qcow_file" --edit '/etc/ssh/sshd_config:s/^#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/'
     sudo virt-customize -v -x -a "$qcow_file" --run-command "rc-service sshd restart || true"
+    echo "清理apk缓存..."
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "apk cache clean || true"
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "rm -rf /var/cache/apk/* || true"
 elif [[ "$qcow_file" == *"almalinux9"* || "$qcow_file" == *"rockylinux"* ]]; then
     echo "处理AlmaLinux 9/Rocky Linux系统..."
     vc_mirror_yum_dnf_aliyun_and_makecache
@@ -265,6 +274,8 @@ elif [[ "$qcow_file" == *"almalinux9"* || "$qcow_file" == *"rockylinux"* ]]; the
     echo "安装qemu-guest-agent..."
     sudo virt-customize -v -x -a "$qcow_file" --run-command "yum install qemu-guest-agent -y || true"
     sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
+    echo "清理yum缓存..."
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "yum clean all || true"
 elif [[ "$qcow_file" == *"almalinux8"* || "$qcow_file" == *"centos9-stream"* || "$qcow_file" == *"centos8-stream"* || "$qcow_file" == *"centos7"* ]]; then
     echo "处理AlmaLinux 8/CentOS系统..."
     vc_mirror_yum_dnf_aliyun_and_makecache
@@ -295,6 +306,8 @@ elif [[ "$qcow_file" == *"almalinux8"* || "$qcow_file" == *"centos9-stream"* || 
     echo "安装qemu-guest-agent..."
     sudo virt-customize -v -x -a "$qcow_file" --run-command "yum install qemu-guest-agent -y || true"
     sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
+    echo "清理yum缓存..."
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "yum clean all || true"
 else
     echo "处理其他系统（使用DNF）..."
     vc_mirror_yum_dnf_aliyun_and_makecache
@@ -325,9 +338,13 @@ else
     echo "安装qemu-guest-agent..."
     sudo virt-customize -v -x -a "$qcow_file" --run-command "dnf install qemu-guest-agent -y || true"
     sudo virt-customize -v -x -a "$qcow_file" --run-command "if [ -f /lib/systemd/system/qemu-guest-agent.service ] || [ -f /usr/lib/systemd/system/qemu-guest-agent.service ]; then systemctl enable qemu-guest-agent; else echo 'qemu-guest-agent service not found'; fi"
+    echo "清理dnf缓存..."
+    sudo virt-customize -v -x -a "$qcow_file" --run-command "dnf clean all || true"
 fi
 
 # 通用的最终配置
+echo "禁用algif_aead模块（安全加固）..."
+sudo virt-customize -v -x -a "$qcow_file" --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
 echo "设置motd和密码..."
 sudo virt-customize -v -x -a "$qcow_file" --run-command "echo '' > /etc/motd"
 sudo virt-customize -v -x -a "$qcow_file" --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"

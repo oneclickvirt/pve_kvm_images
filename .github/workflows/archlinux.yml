@@ -152,6 +152,8 @@ jobs:
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
           sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+          # 安全加固：禁用algif_aead模块（CVE防护）
+          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
           echo "Compressing Arch Linux image"
           if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore archlinux-expanded.qcow2 archlinux-custom.qcow2; then
               echo "Failed to compress Arch Linux image, exiting..."
