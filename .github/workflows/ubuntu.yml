@@ -13,21 +13,15 @@ jobs:
         git config --global user.email "tg@spiritlhl.top"
     - name: Environment preparation
       run: |
-        set -euo pipefail
-        sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic
-        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
-        # --no-install-recommends omits the kernel needed by supermin.
-        sudo find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -exec chmod a+r {} +
-        LIBGUESTFS_BACKEND=direct timeout --kill-after=30s 180s libguestfs-test-tool
+        bash .github/scripts/prepare_guestfs.sh
     - name: Build Ubuntu Images
-      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
-        passt=no\"\n# 定义版本信息 (从新到旧)\ndeclare -A ubuntu_versions\nubuntu_versions[\"24.04\"]=\"noble\"\nubuntu_versions[\"\
-        22.04\"]=\"jammy\" \nubuntu_versions[\"20.04\"]=\"focal\"\nubuntu_versions[\"18.04\"]=\"bionic\"\n# 按版本顺序处理\
-        \ (从新到旧)\nfor version in \"24.04\" \"22.04\" \"20.04\" \"18.04\"; do\n    codename=${ubuntu_versions[$version]}\n\
-        \    version_clean=${version//./}\n    echo \"=== Processing Ubuntu $version ($codename) ===\"\n    # 清理之前的文件\n\
-        \    rm -f ubuntu-${version}.qcow2 ubuntu-${version}-custom.qcow2 ubuntu${version_clean}.qcow2\n    # 下载镜像\n\
-        \    echo \"Downloading Ubuntu $version Cloud Image\"\n    download_url=\"https://cloud-images.ubuntu.com/${codename}/current/${codename}-server-cloudimg-amd64.img\"\
+      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\n# 定义版本信息 (从新到旧)\ndeclare -A\
+        \ ubuntu_versions\nubuntu_versions[\"24.04\"]=\"noble\"\nubuntu_versions[\"22.04\"]=\"jammy\" \nubuntu_versions[\"\
+        20.04\"]=\"focal\"\nubuntu_versions[\"18.04\"]=\"bionic\"\n# 按版本顺序处理 (从新到旧)\nfor version in \"24.04\" \"\
+        22.04\" \"20.04\" \"18.04\"; do\n    codename=${ubuntu_versions[$version]}\n    version_clean=${version//./}\n\
+        \    echo \"=== Processing Ubuntu $version ($codename) ===\"\n    # 清理之前的文件\n    rm -f ubuntu-${version}.qcow2\
+        \ ubuntu-${version}-custom.qcow2 ubuntu${version_clean}.qcow2\n    # 下载镜像\n    echo \"Downloading Ubuntu\
+        \ $version Cloud Image\"\n    download_url=\"https://cloud-images.ubuntu.com/${codename}/current/${codename}-server-cloudimg-amd64.img\"\
         \n    if ! axel -n 8 -o ubuntu-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel\
         \ failed, trying with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o ubuntu-${version}.qcow2\
         \ \"$download_url\"; then\n            echo \"Failed to download Ubuntu $version, skipping...\"\n      \
@@ -129,7 +123,6 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt=no
       LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:

@@ -13,24 +13,17 @@ jobs:
         git config --global user.email "tg@spiritlhl.top"
     - name: Environment preparation
       run: |
-        set -euo pipefail
-        sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic
-        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
-        # --no-install-recommends omits the kernel needed by supermin.
-        sudo find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -exec chmod a+r {} +
-        LIBGUESTFS_BACKEND=direct timeout --kill-after=30s 180s libguestfs-test-tool
+        bash .github/scripts/prepare_guestfs.sh
     - name: Build Alpine Images
-      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
-        passt=no\"\ndeclare -A alpine_versions\nalpine_versions[\"3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"\
-        3.21\"\nalpine_versions[\"3.20\"]=\"3.20\"\nget_latest_timestamp() {\n    local version=$1\n    local base_url=\"\
-        https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/\"\n    echo \"Fetching directory\
-        \ listing for Alpine $version...\" >&2\n    local raw_html\n    raw_html=$(curl -s --connect-timeout 15\
-        \ --max-time 30 \"$base_url\" 2>/dev/null) || raw_html=\"\"\n    # Handle both URL-encoded (%3A) and literal\
-        \ colon forms\n    timestamps=$(echo \"$raw_html\" | grep -oE '[0-9]{8}_[0-9]{2}(%3A|:)[0-9]{2}' | sed -E\
-        \ 's/([0-9]{8}_[0-9]{2}):([0-9]{2})/\\1%3A\\2/g' | sort -r | head -10)\n    if [ -n \"$timestamps\" ]; then\n\
-        \        for timestamp in $timestamps; do\n            test_url=\"${base_url}${timestamp}/disk.qcow2\"\n\
-        \            echo \"Testing timestamp from listing: $timestamp\" >&2\n            if curl --head --fail\
+      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\ndeclare -A alpine_versions\n\
+        alpine_versions[\"3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"3.21\"\nalpine_versions[\"3.20\"]=\"3.20\"\
+        \nget_latest_timestamp() {\n    local version=$1\n    local base_url=\"https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/\"\
+        \n    echo \"Fetching directory listing for Alpine $version...\" >&2\n    local raw_html\n    raw_html=$(curl\
+        \ -s --connect-timeout 15 --max-time 30 \"$base_url\" 2>/dev/null) || raw_html=\"\"\n    # Handle both URL-encoded\
+        \ (%3A) and literal colon forms\n    timestamps=$(echo \"$raw_html\" | grep -oE '[0-9]{8}_[0-9]{2}(%3A|:)[0-9]{2}'\
+        \ | sed -E 's/([0-9]{8}_[0-9]{2}):([0-9]{2})/\\1%3A\\2/g' | sort -r | head -10)\n    if [ -n \"$timestamps\"\
+        \ ]; then\n        for timestamp in $timestamps; do\n            test_url=\"${base_url}${timestamp}/disk.qcow2\"\
+        \n            echo \"Testing timestamp from listing: $timestamp\" >&2\n            if curl --head --fail\
         \ --connect-timeout 5 --max-time 10 \"$test_url\" >/dev/null 2>&1; then\n                echo \"$timestamp\"\
         \n                return 0\n            fi\n        done\n    fi\n    echo \"No timestamps found from listing,\
         \ trying alternative method...\" >&2\n    current_date=$(date +%Y%m%d)\n    for days_back in {0..14}; do\n\
@@ -144,7 +137,6 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt=no
       LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:

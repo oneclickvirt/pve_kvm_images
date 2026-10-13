@@ -13,10 +13,7 @@ jobs:
         git config --global user.email "tg@spiritlhl.top"
     - name: Environment preparation
       run: |
-        set -euo pipefail
-        sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools
-        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+        bash .github/scripts/prepare_guestfs.sh
     - name: Download qcow2
       run: |
         images=($(curl -s -m 6 https://down.idc.wiki/Image/realServer-Template/current/qcow2/ | grep -o '<a href="[^"]*">' | awk -F'"' '{print $2}' | sed -n '/qcow2$/s#/Image/realServer-Template/current/qcow2/##p'))
@@ -69,7 +66,7 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt:no
+      LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:
   - cron: 34 12 * * *

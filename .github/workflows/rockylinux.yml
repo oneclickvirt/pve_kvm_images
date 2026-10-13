@@ -13,19 +13,12 @@ jobs:
         git config --global user.email "tg@spiritlhl.top"
     - name: Environment preparation
       run: |
-        set -euo pipefail
-        sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic
-        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
-        # --no-install-recommends omits the kernel needed by supermin.
-        sudo find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -exec chmod a+r {} +
-        LIBGUESTFS_BACKEND=direct timeout --kill-after=30s 180s libguestfs-test-tool
+        bash .github/scripts/prepare_guestfs.sh
     - name: Build RockyLinux Images
       run: |
         set -euo pipefail
         uploaded_images=0
         export LIBGUESTFS_BACKEND=direct
-        export LIBGUESTFS_BACKEND_SETTINGS="passt=no"
         declare -A rockylinux_versions
         rockylinux_versions["9"]="9"
         rockylinux_versions["8"]="8"
@@ -182,7 +175,6 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt=no
       LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:

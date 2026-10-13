@@ -13,22 +13,15 @@ jobs:
         git config --global user.email "tg@spiritlhl.top"
     - name: Environment preparation
       run: |
-        set -euo pipefail
-        sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic
-        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
-        # --no-install-recommends omits the kernel needed by supermin.
-        sudo find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -exec chmod a+r {} +
-        LIBGUESTFS_BACKEND=direct timeout --kill-after=30s 180s libguestfs-test-tool
+        bash .github/scripts/prepare_guestfs.sh
     - name: Build Debian Images
-      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
-        passt=no\"\n# 定义版本信息 (从新到旧)\ndeclare -A debian_versions\ndebian_versions[\"13\"]=\"trixie\"\ndebian_versions[\"\
-        12\"]=\"bookworm\" \ndebian_versions[\"11\"]=\"bullseye\"\n# debian_versions[\"10\"]=\"buster\"\n# 按版本顺序处理\
-        \ (从新到旧)\nfor version in 13 12 11; do\n    codename=${debian_versions[$version]}\n    echo \"=== Processing\
-        \ Debian $version ($codename) ===\"\n    # 清理之前的文件\n    rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2\
-        \ debian${version}.qcow2\n    # 下载镜像\n    echo \"Downloading Debian $version Cloud Image\"\n    download_url=\"\
-        https://cdimage.debian.org/images/cloud/${codename}/latest/debian-${version}-genericcloud-amd64.qcow2\"\n\
-        \    if ! axel -n 8 -o debian-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel\
+      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\n# 定义版本信息 (从新到旧)\ndeclare -A\
+        \ debian_versions\ndebian_versions[\"13\"]=\"trixie\"\ndebian_versions[\"12\"]=\"bookworm\" \ndebian_versions[\"\
+        11\"]=\"bullseye\"\n# debian_versions[\"10\"]=\"buster\"\n# 按版本顺序处理 (从新到旧)\nfor version in 13 12 11; do\n\
+        \    codename=${debian_versions[$version]}\n    echo \"=== Processing Debian $version ($codename) ===\"\n\
+        \    # 清理之前的文件\n    rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2 debian${version}.qcow2\n\
+        \    # 下载镜像\n    echo \"Downloading Debian $version Cloud Image\"\n    download_url=\"https://cdimage.debian.org/images/cloud/${codename}/latest/debian-${version}-genericcloud-amd64.qcow2\"\
+        \n    if ! axel -n 8 -o debian-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel\
         \ failed, trying with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o debian-${version}.qcow2\
         \ \"$download_url\"; then\n            echo \"Failed to download Debian $version, skipping...\"\n      \
         \      rm -f debian-${version}.qcow2\n            continue\n        fi\n    fi\n    if [ ! -f \"debian-${version}.qcow2\"\
@@ -126,7 +119,6 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt=no
       LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:
