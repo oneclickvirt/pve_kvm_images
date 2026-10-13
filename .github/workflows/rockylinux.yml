@@ -3,7 +3,7 @@ jobs:
   build_rockylinux_cloud_images:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - name: check path
       run: |
         pwd
@@ -47,10 +47,10 @@ jobs:
             chmod 644 rockylinux-${version}.qcow2
             echo "Customizing RockyLinux $version image"
             # 配置阿里云源
-            virt-customize -a rockylinux-${version}.qcow2 \
+            timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 \
               --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^#baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo 2>/dev/null || true" || true
             # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
-            if ! virt-customize -a rockylinux-${version}.qcow2 \
+            if ! timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 \
               --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
               --timezone Asia/Hong_Kong \
               --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \

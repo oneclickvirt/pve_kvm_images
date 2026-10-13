@@ -3,7 +3,7 @@ jobs:
   build_archlinux_cloud_images:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - name: check path
       run: |
         pwd
@@ -82,7 +82,7 @@ jobs:
             fi
         fi
         echo "Customizing Arch Linux image - Phase 1: Basic Setup"
-        if ! virt-customize -a archlinux-expanded.qcow2 \
+        if ! timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 \
           --smp 1 \
           --timezone Asia/Hong_Kong \
           --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
@@ -93,7 +93,7 @@ jobs:
         fi
 
         echo "Customizing Arch Linux image - Phase 2: GRUB and Services"
-        if ! virt-customize -a archlinux-expanded.qcow2 \
+        if ! timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 \
           --run-command "grub-mkconfig -o /boot/grub/grub.cfg || grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
           --run-command "systemctl enable serial-getty@ttyS1.service || true" \
           --run-command "sync"; then
@@ -105,7 +105,7 @@ jobs:
 
         echo "Customizing Arch Linux image - Phase 3: Package configuration"
         # 配置阿里云源并预装软件包（编译阶段完成，减少首次启动时间）
-        if ! virt-customize -a archlinux-expanded.qcow2 \
+        if ! timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 \
           --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist || true" \
           --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf || true" \
           --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \

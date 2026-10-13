@@ -3,7 +3,7 @@ jobs:
   build_debian_cloud_images:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - name: check path
       run: |
         pwd
@@ -19,98 +19,107 @@ jobs:
         if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
     - name: Build Debian Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
-        passt:no\"\n# 定义版本信息 (从新到旧)\ndeclare -A debian_versions\ndebian_versions[\"13\"]=\"trixie\"\ndebian_versions[\"12\"\
-        ]=\"bookworm\" \ndebian_versions[\"11\"]=\"bullseye\"\n# debian_versions[\"10\"]=\"buster\"\n# 按版本顺序处理 (从新到旧)\nfor\
-        \ version in 13 12 11; do\n    codename=${debian_versions[$version]}\n    echo \"=== Processing Debian $version ($codename)\
-        \ ===\"\n    # 清理之前的文件\n    rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2 debian${version}.qcow2\n\
-        \    # 下载镜像\n    echo \"Downloading Debian $version Cloud Image\"\n    download_url=\"https://cdimage.debian.org/images/cloud/${codename}/latest/debian-${version}-genericcloud-amd64.qcow2\"\
-        \n    if ! axel -n 8 -o debian-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel failed, trying\
-        \ with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o debian-${version}.qcow2 \"$download_url\"; then\n\
-        \            echo \"Failed to download Debian $version, skipping...\"\n            rm -f debian-${version}.qcow2\n\
-        \            continue\n        fi\n    fi\n    if [ ! -f \"debian-${version}.qcow2\" ] || [ $(stat -c %s \"debian-${version}.qcow2\"\
-        ) -lt 10485760 ]; then\n        echo \"Download failed or file too small for Debian $version, skipping...\"\n    \
-        \    rm -f debian-${version}.qcow2\n        continue\n    fi\n    chmod 644 debian-${version}.qcow2\n    # 自定义镜像\n\
-        \    echo \"Customizing Debian $version image\"\n    # 先替换源为阿里云镜像（支持DEB822格式和传统格式）\n    # Debian 13+ 使用 mirror+file:\
-        \ 协议，需要完全重写 debian.sources 文件\n    # 获取版本代号用于生成正确的源文件\n    if [ \"$version\" = \"13\" ]; then\n        codename=\"\
-        trixie\"\n    elif [ \"$version\" = \"12\" ]; then\n        codename=\"bookworm\"\n    elif [ \"$version\" = \"11\"\
-        \ ]; then\n        codename=\"bullseye\"\n    else\n        codename=\"bookworm\"\n    fi\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n\
-        \    if ! virt-customize -a debian-${version}.qcow2 \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
-        \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --run-command \"rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list\
-        \ /etc/apt/sources.list.d/debian.sources 2>/dev/null || true\" \\\n      --run-command \"printf 'Types: deb\\nURIs:\
-        \ https://deb.debian.org/debian\\nSuites: ${codename} ${codename}-updates ${codename}-backports\\nComponents: main\
-        \ contrib non-free non-free-firmware\\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\\n\\nTypes: deb\\\
-        nURIs: https://deb.debian.org/debian-security\\nSuites: ${codename}-security\\nComponents: main contrib non-free non-free-firmware\\\
-        nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\\n' > /etc/apt/sources.list.d/debian.sources\" \\\n   \
-        \   --run-command \"sed -i 's|Types: deb deb-src|Types: deb|g' /etc/apt/sources.list.d/debian.sources || true\" \\\
-        \n      --run-command \"sed -i 's|generate_mirrorlists: true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/01_debian_cloud.cfg\
-        \ || true\" \\\n      --timezone Asia/Hong_Kong \\\n      --append-line \"/etc/default/grub:# disables OS prober to\
-        \ avoid loopback detection which breaks booting\" \\\n      --append-line \"/etc/default/grub:GRUB_DISABLE_OS_PROBER=true\"\
-        \ \\\n      --run-command \"update-grub || update-grub2 || true\" \\\n      --run-command \"systemctl enable serial-getty@ttyS1.service\
-        \ || true\" \\\n      --append-line \"/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com\" \\\n     \
-        \ --run-command \"apt-get update -y || true\" \\\n      --run-command \"apt-get install -y sudo qemu-guest-agent bash-completion\
-        \ unzip wget curl axel net-tools iputils-ping iputils-arping iputils-tracepath nano most screen less vim bzip2 mtr-tiny\
-        \ htop dnsutils zstd cron lsof || true\" \\\n      --run-command \"(apt-get install -y spice-vdagent lldpd || true)\"\
-        \ \\\n      --run-command \"systemctl enable qemu-guest-agent || true\" \\\n      --run-command \"apt-get -y autoremove\
-        \ --purge && apt-get -y clean || true\" \\\n      --delete \"/var/log/*.log\" \\\n      --truncate \"/etc/machine-id\"\
-        ; then\n        echo \"Failed to configure Debian $version, skipping...\"\n        rm -f debian-${version}.qcow2\n\
-        \        continue\n    fi\n    echo \"Configuring SSH and root access for Debian $version...\"\n    # SSH配置 - 启用密码认证和root登录\n\
-        \    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth:\
-        \ 1/g' /etc/cloud/cloud.cfg || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2\
-        \ --run-command \"systemctl enable ssh || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2\
-        \ --run-command \"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config\"\n   \
-        \ sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"sed -i 's/#PasswordAuthentication\
-        \ no/PasswordAuthentication yes/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize -a\
-        \ debian-${version}.qcow2 --run-command \"sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config\"\
-        \n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"sed -i 's/#Port\
-        \ 22/Port 22/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2\
-        \ --run-command \"sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s\
-        \ 45m virt-customize -a debian-${version}.qcow2 --run-command \"sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g'\
-        \ /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command\
-        \ \"sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config\"\n    echo \"Setting root password and MOTD\
-        \ for Debian $version...\"\n    # 设置root密码\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2\
-        \ --run-command \"echo root:oneclickvirt | chpasswd root\"\n    # 设置MOTD\n    sudo timeout --kill-after=30s 45m virt-customize\
-        \ -a debian-${version}.qcow2 --run-command \"echo '' > /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize\
-        \ -a debian-${version}.qcow2 --run-command \"echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >>\
-        \ /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"echo\
-        \ 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize\
-        \ -a debian-${version}.qcow2 --run-command \"echo '--by https://t.me/spiritlhl' >> /etc/motd\"\n    # 安全加固：禁用algif_aead模块（CVE防护）\n\
-        \    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"mkdir -p /etc/modprobe.d\
-        \ && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf\"\n    # 压缩镜像\n    echo \"Compressing\
-        \ Debian $version image\"\n    if ! TMPDIR=\"$(pwd)\" timeout --kill-after=30s 45m virt-sparsify --compress --check-tmpdir=ignore\
-        \ debian-${version}.qcow2 debian-${version}-custom.qcow2; then\n        echo \"Failed to compress Debian $version\
-        \ image, skipping...\"\n        rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2\n        continue\n \
-        \   fi\n    mv debian-${version}-custom.qcow2 debian${version}.qcow2\n    ls -lh debian${version}.qcow2\n    # 上传镜像\n\
-        \    file=\"debian${version}.qcow2\"\n    if [ -f \"$file\" ] && [ $(stat -c %s \"$file\") -gt 10485760 ] && [ $(stat\
-        \ -c %s \"$file\") -le 2147483648 ]; then\n        echo \"Processing file: $file\"\n        release_id=$(curl -fsS\
-        \ --retry 3 --connect-timeout 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"Accept:\
-        \ application/vnd.github.v3+json\" \"https://api.github.com/repos/${{ github.repository }}/releases/tags/debian\"\
-        \ | jq -r '.id')\n        if [ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n            echo \"Release\
-        \ 'debian' not found, please create it first\"\n            rm -f debian-${version}.qcow2 debian${version}.qcow2\n\
-        \            continue\n        fi\n        echo \"Found release ID: $release_id\"\n        echo \"Checking if $file\
-        \ already exists in release...\"\n        existing_asset_id=$(curl -fsS --retry 3 --connect-timeout 10 --max-time\
-        \ 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/${{\
-        \ github.repository }}/releases/$release_id/assets\" | jq -r --arg name \"$(basename \"$file\")\" '.[] | select(.name\
-        \ == $name) | .id')\n        if [ -n \"$existing_asset_id\" ] && [ \"$existing_asset_id\" != \"null\" ]; then\n  \
-        \          echo \"Asset $file already exists in release, deleting existing asset...\"\n            delete_response=$(curl\
-        \ -s -X DELETE -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" \"https://api.github.com/repos/${{ github.repository\
-        \ }}/releases/assets/$existing_asset_id\")\n            echo \"$delete_response\"\n            if [ $? -eq 0 ] &&\
-        \ ! echo \"$delete_response\" | grep -q \"error\"; then\n                echo \"Existing asset deleted successfully.\"\
-        \n            else\n                echo \"Failed to delete existing asset for $file. Skipping file upload...\"\n\
-        \                rm -f debian-${version}.qcow2 debian${version}.qcow2\n                continue\n            fi\n\
-        \        else\n            echo \"No existing $file file found in release.\"\n        fi\n        echo \"Uploading\
-        \ $file to release...\"\n        upload_response=$(curl -s -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\"\
-        \ \\\n          -H \"Content-Type: application/octet-stream\" \\\n          -T \"$file\" \\\n          \"https://uploads.github.com/repos/${{\
-        \ github.repository }}/releases/$release_id/assets?name=$(basename \"$file\")\")\n        echo \"Upload response:\
-        \ $upload_response\"\n        if echo \"$upload_response\" | jq -e '.browser_download_url' > /dev/null 2>&1; then\n\
-        \            echo \"Successfully uploaded $file\"\n                      uploaded_images=$((uploaded_images + 1))\n\
-        \            download_url=$(echo \"$upload_response\" | jq -r '.browser_download_url')\n            echo \"Download\
-        \ URL: $download_url\"\n        else\n            echo \"Failed to upload $file\"\n            echo \"Response: $upload_response\"\
-        \n        fi\n    else\n        echo \"File $file does not exist, is too small (< 10MB), or is too large (> 2GB)\"\
-        \n        if [ -f \"$file\" ]; then\n            file_size=$(stat -c %s \"$file\")\n            echo \"File size:\
-        \ $file_size bytes\"\n        fi\n    fi\n    # 清理当前版本的文件\n    echo \"Cleaning up files for Debian $version\"\n  \
-        \  rm -f debian-${version}.qcow2 debian${version}.qcow2\n    echo \"=== Completed processing Debian $version ===\"\
-        \n    echo \"\"\ndone\necho \"All Debian versions processed!\"\nif (( uploaded_images == 0 )); then echo \"No images\
-        \ were published\" >&2; exit 1; fi\n"
+        passt:no\"\n# 定义版本信息 (从新到旧)\ndeclare -A debian_versions\ndebian_versions[\"13\"]=\"trixie\"\ndebian_versions[\"\
+        12\"]=\"bookworm\" \ndebian_versions[\"11\"]=\"bullseye\"\n# debian_versions[\"10\"]=\"buster\"\n# 按版本顺序处理\
+        \ (从新到旧)\nfor version in 13 12 11; do\n    codename=${debian_versions[$version]}\n    echo \"=== Processing\
+        \ Debian $version ($codename) ===\"\n    # 清理之前的文件\n    rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2\
+        \ debian${version}.qcow2\n    # 下载镜像\n    echo \"Downloading Debian $version Cloud Image\"\n    download_url=\"\
+        https://cdimage.debian.org/images/cloud/${codename}/latest/debian-${version}-genericcloud-amd64.qcow2\"\n\
+        \    if ! axel -n 8 -o debian-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel\
+        \ failed, trying with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o debian-${version}.qcow2\
+        \ \"$download_url\"; then\n            echo \"Failed to download Debian $version, skipping...\"\n      \
+        \      rm -f debian-${version}.qcow2\n            continue\n        fi\n    fi\n    if [ ! -f \"debian-${version}.qcow2\"\
+        \ ] || [ $(stat -c %s \"debian-${version}.qcow2\") -lt 10485760 ]; then\n        echo \"Download failed\
+        \ or file too small for Debian $version, skipping...\"\n        rm -f debian-${version}.qcow2\n        continue\n\
+        \    fi\n    chmod 644 debian-${version}.qcow2\n    # 自定义镜像\n    echo \"Customizing Debian $version image\"\
+        \n    # 先替换源为阿里云镜像（支持DEB822格式和传统格式）\n    # Debian 13+ 使用 mirror+file: 协议，需要完全重写 debian.sources 文件\n    #\
+        \ 获取版本代号用于生成正确的源文件\n    if [ \"$version\" = \"13\" ]; then\n        codename=\"trixie\"\n    elif [ \"$version\"\
+        \ = \"12\" ]; then\n        codename=\"bookworm\"\n    elif [ \"$version\" = \"11\" ]; then\n        codename=\"\
+        bullseye\"\n    else\n        codename=\"bookworm\"\n    fi\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n    if !\
+        \ timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 \\\n      --run-command \"echo\
+        \ 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --run-command\
+        \ \"rm -f /etc/apt/mirrors/debian.list /etc/apt/mirrors/debian-security.list /etc/apt/sources.list.d/debian.sources\
+        \ 2>/dev/null || true\" \\\n      --run-command \"printf 'Types: deb\\nURIs: https://deb.debian.org/debian\\\
+        nSuites: ${codename} ${codename}-updates ${codename}-backports\\nComponents: main contrib non-free non-free-firmware\\\
+        nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\\n\\nTypes: deb\\nURIs: https://deb.debian.org/debian-security\\\
+        nSuites: ${codename}-security\\nComponents: main contrib non-free non-free-firmware\\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\\\
+        n' > /etc/apt/sources.list.d/debian.sources\" \\\n      --run-command \"sed -i 's|Types: deb deb-src|Types:\
+        \ deb|g' /etc/apt/sources.list.d/debian.sources || true\" \\\n      --run-command \"sed -i 's|generate_mirrorlists:\
+        \ true|generate_mirrorlists: false|g' /etc/cloud/cloud.cfg.d/01_debian_cloud.cfg || true\" \\\n      --timezone\
+        \ Asia/Hong_Kong \\\n      --append-line \"/etc/default/grub:# disables OS prober to avoid loopback detection\
+        \ which breaks booting\" \\\n      --append-line \"/etc/default/grub:GRUB_DISABLE_OS_PROBER=true\" \\\n\
+        \      --run-command \"update-grub || update-grub2 || true\" \\\n      --run-command \"systemctl enable\
+        \ serial-getty@ttyS1.service || true\" \\\n      --append-line \"/etc/systemd/timesyncd.conf:NTP=time.apple.com\
+        \ time.windows.com\" \\\n      --run-command \"apt-get update -y || true\" \\\n      --run-command \"apt-get\
+        \ install -y sudo qemu-guest-agent bash-completion unzip wget curl axel net-tools iputils-ping iputils-arping\
+        \ iputils-tracepath nano most screen less vim bzip2 mtr-tiny htop dnsutils zstd cron lsof || true\" \\\n\
+        \      --run-command \"(apt-get install -y spice-vdagent lldpd || true)\" \\\n      --run-command \"systemctl\
+        \ enable qemu-guest-agent || true\" \\\n      --run-command \"apt-get -y autoremove --purge && apt-get -y\
+        \ clean || true\" \\\n      --delete \"/var/log/*.log\" \\\n      --truncate \"/etc/machine-id\"; then\n\
+        \        echo \"Failed to configure Debian $version, skipping...\"\n        rm -f debian-${version}.qcow2\n\
+        \        continue\n    fi\n    echo \"Configuring SSH and root access for Debian $version...\"\n    # SSH配置\
+        \ - 启用密码认证和root登录\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command\
+        \ \"sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg || true\"\n    sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"systemctl enable ssh ||\
+        \ true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command\
+        \ \"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config\"\n    sudo\
+        \ timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"sed -i 's/#PasswordAuthentication\
+        \ no/PasswordAuthentication yes/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a debian-${version}.qcow2 --run-command \"sed -i 's/PasswordAuthentication no/PasswordAuthentication\
+        \ yes/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2\
+        \ --run-command \"sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a debian-${version}.qcow2 --run-command \"sed -i 's/#AddressFamily any/AddressFamily\
+        \ any/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2\
+        \ --run-command \"sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config\"\n   \
+        \ sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command \"sed -i 's/#ListenAddress\
+        \ ::/ListenAddress ::/g' /etc/ssh/sshd_config\"\n    echo \"Setting root password and MOTD for Debian $version...\"\
+        \n    # 设置root密码\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command\
+        \ \"echo root:oneclickvirt | chpasswd root\"\n    # 设置MOTD\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a debian-${version}.qcow2 --run-command \"echo '' > /etc/motd\"\n    sudo timeout --kill-after=30s 45m\
+        \ virt-customize -a debian-${version}.qcow2 --run-command \"echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images'\
+        \ >> /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2 --run-command\
+        \ \"echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd\"\n    sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a debian-${version}.qcow2 --run-command \"echo '--by https://t.me/spiritlhl' >> /etc/motd\"\
+        \n    # 安全加固：禁用algif_aead模块（CVE防护）\n    sudo timeout --kill-after=30s 45m virt-customize -a debian-${version}.qcow2\
+        \ --run-command \"mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf\"\
+        \n    # 压缩镜像\n    echo \"Compressing Debian $version image\"\n    if ! TMPDIR=\"$(pwd)\" timeout --kill-after=30s\
+        \ 45m virt-sparsify --compress --check-tmpdir=ignore debian-${version}.qcow2 debian-${version}-custom.qcow2;\
+        \ then\n        echo \"Failed to compress Debian $version image, skipping...\"\n        rm -f debian-${version}.qcow2\
+        \ debian-${version}-custom.qcow2\n        continue\n    fi\n    mv debian-${version}-custom.qcow2 debian${version}.qcow2\n\
+        \    ls -lh debian${version}.qcow2\n    # 上传镜像\n    file=\"debian${version}.qcow2\"\n    if [ -f \"$file\"\
+        \ ] && [ $(stat -c %s \"$file\") -gt 10485760 ] && [ $(stat -c %s \"$file\") -le 2147483648 ]; then\n  \
+        \      echo \"Processing file: $file\"\n        release_id=$(curl -fsS --retry 3 --connect-timeout 10 --max-time\
+        \ 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"Accept: application/vnd.github.v3+json\"\
+        \ \"https://api.github.com/repos/${{ github.repository }}/releases/tags/debian\" | jq -r '.id')\n      \
+        \  if [ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n            echo \"Release 'debian'\
+        \ not found, please create it first\"\n            rm -f debian-${version}.qcow2 debian${version}.qcow2\n\
+        \            continue\n        fi\n        echo \"Found release ID: $release_id\"\n        echo \"Checking\
+        \ if $file already exists in release...\"\n        existing_asset_id=$(curl -fsS --retry 3 --connect-timeout\
+        \ 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"Accept: application/vnd.github.v3+json\"\
+        \ \"https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets\" | jq -r --arg name\
+        \ \"$(basename \"$file\")\" '.[] | select(.name == $name) | .id')\n        if [ -n \"$existing_asset_id\"\
+        \ ] && [ \"$existing_asset_id\" != \"null\" ]; then\n            echo \"Asset $file already exists in release,\
+        \ deleting existing asset...\"\n            delete_response=$(curl -s -X DELETE -H \"Authorization: Bearer\
+        \ ${{ secrets.GITHUB_TOKEN }}\" \"https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id\"\
+        )\n            echo \"$delete_response\"\n            if [ $? -eq 0 ] && ! echo \"$delete_response\" | grep\
+        \ -q \"error\"; then\n                echo \"Existing asset deleted successfully.\"\n            else\n\
+        \                echo \"Failed to delete existing asset for $file. Skipping file upload...\"\n         \
+        \       rm -f debian-${version}.qcow2 debian${version}.qcow2\n                continue\n            fi\n\
+        \        else\n            echo \"No existing $file file found in release.\"\n        fi\n        echo \"\
+        Uploading $file to release...\"\n        upload_response=$(curl -s -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN\
+        \ }}\" \\\n          -H \"Content-Type: application/octet-stream\" \\\n          -T \"$file\" \\\n     \
+        \     \"https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename\
+        \ \"$file\")\")\n        echo \"Upload response: $upload_response\"\n        if echo \"$upload_response\"\
+        \ | jq -e '.browser_download_url' > /dev/null 2>&1; then\n            echo \"Successfully uploaded $file\"\
+        \n                      uploaded_images=$((uploaded_images + 1))\n            download_url=$(echo \"$upload_response\"\
+        \ | jq -r '.browser_download_url')\n            echo \"Download URL: $download_url\"\n        else\n   \
+        \         echo \"Failed to upload $file\"\n            echo \"Response: $upload_response\"\n        fi\n\
+        \    else\n        echo \"File $file does not exist, is too small (< 10MB), or is too large (> 2GB)\"\n\
+        \        if [ -f \"$file\" ]; then\n            file_size=$(stat -c %s \"$file\")\n            echo \"File\
+        \ size: $file_size bytes\"\n        fi\n    fi\n    # 清理当前版本的文件\n    echo \"Cleaning up files for Debian\
+        \ $version\"\n    rm -f debian-${version}.qcow2 debian${version}.qcow2\n    echo \"=== Completed processing\
+        \ Debian $version ===\"\n    echo \"\"\ndone\necho \"All Debian versions processed!\"\nif (( uploaded_images\
+        \ == 0 )); then echo \"No images were published\" >&2; exit 1; fi\n"
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
