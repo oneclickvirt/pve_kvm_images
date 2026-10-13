@@ -86,22 +86,11 @@ jobs:
         sleep 5
 
         echo "Customizing Arch Linux image - Phase 3: Package configuration"
-        # 配置阿里云源并预装软件包（编译阶段完成，减少首次启动时间）
+        # Run package setup as one script so cleanup also runs after failures.
         if ! timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 \
-          --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist || true" \
-          --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf || true" \
           --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-          --run-command "SYSTEMD_OFFLINE=1 pacman-key --init" \
-          --run-command "SYSTEMD_OFFLINE=1 pacman-key --populate archlinux" \
-          --run-command "SYSTEMD_OFFLINE=1 pacman -Sy --noconfirm archlinux-keyring" \
-          --run-command "SYSTEMD_OFFLINE=1 pacman -Syu --noconfirm" \
-          --run-command "SYSTEMD_OFFLINE=1 pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh" \
-          --run-command "(pacman -S --noconfirm spice-vdagent bind bind-tools || true)" \
-          --run-command "systemctl enable qemu-guest-agent || true" \
-          --run-command "systemctl enable sshd || true" \
-          --run-command "pacman -Scc --noconfirm || true" \
-          --run-command "gpgconf --homedir /etc/pacman.d/gnupg --kill all || true; sync"; then
-            echo "Failed to configure Arch Linux, exiting..."
+          --run .github/scripts/configure_arch_guest.sh; then
+            echo "Failed to configure or validate Arch Linux, exiting..."
             rm -f archlinux.qcow2 archlinux-expanded.qcow2
             exit 1
         fi
