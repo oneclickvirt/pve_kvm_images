@@ -17,41 +17,14 @@ jobs:
     - name: Build Alpine Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\ndeclare -A alpine_versions\n\
         alpine_versions[\"3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"3.21\"\nalpine_versions[\"3.20\"]=\"3.20\"\
-        \nget_latest_timestamp() {\n    local version=$1\n    local base_url=\"https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/\"\
-        \n    echo \"Fetching directory listing for Alpine $version...\" >&2\n    local raw_html\n    raw_html=$(curl\
-        \ -s --connect-timeout 15 --max-time 30 \"$base_url\" 2>/dev/null) || raw_html=\"\"\n    # Handle both URL-encoded\
-        \ (%3A) and literal colon forms\n    timestamps=$(echo \"$raw_html\" | grep -oE '[0-9]{8}_[0-9]{2}(%3A|:)[0-9]{2}'\
-        \ | sed -E 's/([0-9]{8}_[0-9]{2}):([0-9]{2})/\\1%3A\\2/g' | sort -r | head -10)\n    if [ -n \"$timestamps\"\
-        \ ]; then\n        for timestamp in $timestamps; do\n            test_url=\"${base_url}${timestamp}/disk.qcow2\"\
-        \n            echo \"Testing timestamp from listing: $timestamp\" >&2\n            if curl --head --fail\
-        \ --connect-timeout 5 --max-time 10 \"$test_url\" >/dev/null 2>&1; then\n                echo \"$timestamp\"\
-        \n                return 0\n            fi\n        done\n    fi\n    echo \"No timestamps found from listing,\
-        \ trying alternative method...\" >&2\n    current_date=$(date +%Y%m%d)\n    for days_back in {0..14}; do\n\
-        \        test_date=$(date -d \"$current_date -$days_back days\" +%Y%m%d)\n        for hour in 13 12 11 10\
-        \ 09 08 07 06 05 14 15 16 17 18; do\n            for minute in 00 30; do\n                timestamp=\"${test_date}_${hour}%3A${minute}\"\
-        \n                test_url=\"${base_url}${timestamp}/disk.qcow2\"\n                echo \"Testing constructed\
-        \ timestamp: $timestamp\" >&2\n                if curl --head --fail --connect-timeout 5 --max-time 10 \"\
-        $test_url\" >/dev/null 2>&1; then\n                    echo \"$timestamp\"\n                    return 0\n\
-        \                fi\n            done\n        done\n    done\n    return 1\n}\n\ndownload_alpine_image()\
-        \ {\n    local version=$1\n    local output_file=$2\n    echo \"Getting latest timestamp for Alpine $version...\"\
-        \n    timestamp=$(get_latest_timestamp \"$version\" || echo \"\")\n    if [ -z \"$timestamp\" ]; then\n\
-        \        echo \"Failed to get valid timestamp for Alpine $version\"\n        return 1\n    fi\n    download_url=\"\
-        https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/${timestamp}/disk.qcow2\"\n    echo\
-        \ \"Found timestamp: $timestamp\"\n    echo \"Download URL: $download_url\"\n    echo \"Downloading with\
-        \ axel...\"\n    if axel -n 8 -o \"$output_file\" \"$download_url\" 2>/dev/null; then\n        if [ -f \"\
-        $output_file\" ] && [ $(stat -c %s \"$output_file\") -gt 10485760 ]; then\n            echo \"Successfully\
-        \ downloaded with axel: $(stat -c %s \"$output_file\") bytes\"\n            return 0\n        fi\n    fi\n\
-        \    echo \"Axel failed, trying with curl...\"\n    if curl -L -o \"$output_file\" \"$download_url\" 2>/dev/null;\
-        \ then\n        if [ -f \"$output_file\" ] && [ $(stat -c %s \"$output_file\") -gt 10485760 ]; then\n  \
-        \          echo \"Successfully downloaded with curl: $(stat -c %s \"$output_file\") bytes\"\n          \
-        \  return 0\n        fi\n    fi\n    echo \"Both download methods failed\"\n    rm -f \"$output_file\"\n\
-        \    return 1\n}\n\nfor version in \"3.22\" \"3.21\" \"3.20\"; do\n    echo \"=== Processing Alpine $version\
-        \ ===\"\n    rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2 alpine${version}.qcow2\n    \n\
-        \    echo \"Downloading Alpine $version Cloud Image\"\n    if ! download_alpine_image \"$version\" \"alpine-${version}.qcow2\"\
-        ; then\n        echo \"Failed to download Alpine $version, skipping...\"\n        continue\n    fi\n   \
-        \ \n    if [ ! -f \"alpine-${version}.qcow2\" ] || [ $(stat -c %s \"alpine-${version}.qcow2\") -lt 10485760\
-        \ ]; then\n        echo \"Download failed or file too small for Alpine $version, skipping...\"\n       \
-        \ rm -f alpine-${version}.qcow2\n        continue\n    fi\n    \n    chmod 644 alpine-${version}.qcow2\n\
+        \ndownload_alpine_image() {\n    python3 .github/scripts/download_alpine_image.py \"$1\" \"$2\"\n}\n\nimage_versions=(3.22\
+        \ 3.21 3.20)\nexpected_images=${#image_versions[@]}\nfor version in \"${image_versions[@]}\"; do\n    echo\
+        \ \"=== Processing Alpine $version ===\"\n    rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2\
+        \ alpine${version}.qcow2\n    \n    echo \"Downloading Alpine $version Cloud Image\"\n    if ! download_alpine_image\
+        \ \"$version\" \"alpine-${version}.qcow2\"; then\n        echo \"Failed to download Alpine $version, skipping...\"\
+        \n        continue\n    fi\n    \n    if [ ! -f \"alpine-${version}.qcow2\" ] || [ $(stat -c %s \"alpine-${version}.qcow2\"\
+        ) -lt 10485760 ]; then\n        echo \"Download failed or file too small for Alpine $version, skipping...\"\
+        \n        rm -f alpine-${version}.qcow2\n        continue\n    fi\n    \n    chmod 644 alpine-${version}.qcow2\n\
         \    \n    echo \"Customizing Alpine $version image\"\n    # 配置阿里云源\n    timeout --kill-after=30s 45m virt-customize\
         \ -a alpine-${version}.qcow2 \\\n      --run-command \"sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g'\
         \ /etc/apk/repositories || true\" \\\n      --run-command \"sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g'\
@@ -59,10 +32,10 @@ jobs:
         \ 45m virt-customize -a alpine-${version}.qcow2 \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
         \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong \\\n      --append-line\
         \ \"/etc/conf.d/ntpd:NTPD_OPTS=\\\"-N -p time.apple.com -p time.windows.com\\\"\" \\\n      --run-command\
-        \ \"apk update && apk upgrade || true\" \\\n      --run-command \"apk add sudo qemu-guest-agent bash-completion\
+        \ \"apk update && apk upgrade\" \\\n      --run-command \"apk add sudo qemu-guest-agent bash-completion\
         \ unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh\
-        \ openrc || true\" \\\n      --run-command \"echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent\"\
-        \ \\\n      --run-command \"echo 'name=QEMU Guest Agent' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command\
+        \ openrc\" \\\n      --run-command \"echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent\" \\\n   \
+        \   --run-command \"echo 'name=QEMU Guest Agent' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command\
         \ \"echo 'command=/usr/bin/qemu-ga' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"printf 'command_args=\\\
         \"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\\\
         \"\\n' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"echo 'pidfile=/run/qemu-guest-agent.pid'\
@@ -132,8 +105,8 @@ jobs:
         \        if [ -f \"$file\" ]; then\n            file_size=$(stat -c %s \"$file\")\n            echo \"File\
         \ size: $file_size bytes\"\n        fi\n    fi\n    \n    echo \"Cleaning up files for Alpine $version\"\
         \n    rm -f alpine-${version}.qcow2 alpine${version}.qcow2\n    echo \"=== Completed processing Alpine $version\
-        \ ===\"\n    echo \"\"\ndone\necho \"All Alpine versions processed!\"\n\nif (( uploaded_images == 0 ));\
-        \ then echo \"No images were published\" >&2; exit 1; fi\n"
+        \ ===\"\n    echo \"\"\ndone\necho \"All Alpine versions processed!\"\n\nif (( uploaded_images != expected_images\
+        \ )); then echo \"Published $uploaded_images of $expected_images configured images\" >&2; exit 1; fi\n"
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct

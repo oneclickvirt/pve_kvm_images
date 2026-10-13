@@ -23,7 +23,9 @@ jobs:
         almalinux_versions["10"]="10"
         almalinux_versions["9"]="9"
         almalinux_versions["8"]="8"
-        for version in "10" "9" "8"; do
+        image_versions=(10 9 8)
+        expected_images=${#image_versions[@]}
+        for version in "${image_versions[@]}"; do
             echo "=== Processing Almalinux $version ==="
             rm -f almalinux-${version}.qcow2 almalinux-${version}-custom.qcow2 almalinux${version}.qcow2
             echo "Downloading Almalinux $version Cloud Image"
@@ -173,7 +175,7 @@ jobs:
         done
         echo "All Almalinux versions processed!"
 
-        if (( uploaded_images == 0 )); then echo "No images were published" >&2; exit 1; fi
+        if (( uploaded_images != expected_images )); then echo "Published $uploaded_images of $expected_images configured images" >&2; exit 1; fi
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct

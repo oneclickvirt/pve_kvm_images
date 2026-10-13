@@ -16,10 +16,11 @@ jobs:
         bash .github/scripts/prepare_guestfs.sh
     - name: Build CentOS Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\ndeclare -A centos_versions\n\
-        centos_versions[\"9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"7\"]=\"7\"\nfor version\
-        \ in \"9\" \"8\"; do\n    echo \"=== Processing CentOS $version ===\"\n    rm -f centos-${version}.qcow2\
-        \ centos-${version}-custom.qcow2 centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"Downloading\
-        \ CentOS $version Cloud Image\"\n    if [ \"$version\" = \"9\" ]; then\n        download_url=\"https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2\"\
+        centos_versions[\"9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"7\"]=\"7\"\nimage_versions=(9\
+        \ 8)\nexpected_images=${#image_versions[@]}\nfor version in \"${image_versions[@]}\"; do\n    echo \"===\
+        \ Processing CentOS $version ===\"\n    rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2 centos${version}.qcow2\
+        \ centos-${version}.qcow2.bak\n    echo \"Downloading CentOS $version Cloud Image\"\n    if [ \"$version\"\
+        \ = \"9\" ]; then\n        download_url=\"https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2\"\
         \n    elif [ \"$version\" = \"8\" ]; then\n        download_url=\"https://cloud.centos.org/centos/8-stream/x86_64/images/CentOS-Stream-GenericCloud-8-latest.x86_64.qcow2\"\
         \n    # elif [ \"$version\" = \"7\" ]; then\n    #     download_url=\"https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2\"\
         \n    fi\n    if ! axel -n 8 -o centos-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo\
@@ -140,7 +141,8 @@ jobs:
         \ size: $file_size bytes\"\n        fi\n    fi\n    echo \"Cleaning up files for CentOS $version\"\n   \
         \ rm -f centos-${version}.qcow2 centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"=== Completed\
         \ processing CentOS $version ===\"\n    echo \"\"\ndone\necho \"All CentOS versions processed!\"\nif ((\
-        \ uploaded_images == 0 )); then echo \"No images were published\" >&2; exit 1; fi\n"
+        \ uploaded_images != expected_images )); then echo \"Published $uploaded_images of $expected_images configured\
+        \ images\" >&2; exit 1; fi\n"
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct

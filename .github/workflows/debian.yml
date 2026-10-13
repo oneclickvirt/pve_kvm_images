@@ -17,10 +17,11 @@ jobs:
     - name: Build Debian Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\n# 定义版本信息 (从新到旧)\ndeclare -A\
         \ debian_versions\ndebian_versions[\"13\"]=\"trixie\"\ndebian_versions[\"12\"]=\"bookworm\" \ndebian_versions[\"\
-        11\"]=\"bullseye\"\n# debian_versions[\"10\"]=\"buster\"\n# 按版本顺序处理 (从新到旧)\nfor version in 13 12 11; do\n\
-        \    codename=${debian_versions[$version]}\n    echo \"=== Processing Debian $version ($codename) ===\"\n\
-        \    # 清理之前的文件\n    rm -f debian-${version}.qcow2 debian-${version}-custom.qcow2 debian${version}.qcow2\n\
-        \    # 下载镜像\n    echo \"Downloading Debian $version Cloud Image\"\n    download_url=\"https://cdimage.debian.org/images/cloud/${codename}/latest/debian-${version}-genericcloud-amd64.qcow2\"\
+        11\"]=\"bullseye\"\n# debian_versions[\"10\"]=\"buster\"\n# 按版本顺序处理 (从新到旧)\nimage_versions=(13 12 11)\n\
+        expected_images=${#image_versions[@]}\nfor version in \"${image_versions[@]}\"; do\n    codename=${debian_versions[$version]}\n\
+        \    echo \"=== Processing Debian $version ($codename) ===\"\n    # 清理之前的文件\n    rm -f debian-${version}.qcow2\
+        \ debian-${version}-custom.qcow2 debian${version}.qcow2\n    # 下载镜像\n    echo \"Downloading Debian $version\
+        \ Cloud Image\"\n    download_url=\"https://cdimage.debian.org/images/cloud/${codename}/latest/debian-${version}-genericcloud-amd64.qcow2\"\
         \n    if ! axel -n 8 -o debian-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel\
         \ failed, trying with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o debian-${version}.qcow2\
         \ \"$download_url\"; then\n            echo \"Failed to download Debian $version, skipping...\"\n      \
@@ -115,7 +116,8 @@ jobs:
         \ size: $file_size bytes\"\n        fi\n    fi\n    # 清理当前版本的文件\n    echo \"Cleaning up files for Debian\
         \ $version\"\n    rm -f debian-${version}.qcow2 debian${version}.qcow2\n    echo \"=== Completed processing\
         \ Debian $version ===\"\n    echo \"\"\ndone\necho \"All Debian versions processed!\"\nif (( uploaded_images\
-        \ == 0 )); then echo \"No images were published\" >&2; exit 1; fi\n"
+        \ != expected_images )); then echo \"Published $uploaded_images of $expected_images configured images\"\
+        \ >&2; exit 1; fi\n"
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct

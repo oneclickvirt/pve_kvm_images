@@ -22,7 +22,9 @@ jobs:
         declare -A rockylinux_versions
         rockylinux_versions["9"]="9"
         rockylinux_versions["8"]="8"
-        for version in "9" "8"; do
+        image_versions=(9 8)
+        expected_images=${#image_versions[@]}
+        for version in "${image_versions[@]}"; do
             echo "=== Processing RockyLinux $version ==="
             rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
             echo "Downloading RockyLinux $version Cloud Image"
@@ -171,7 +173,7 @@ jobs:
             echo ""
         done
         echo "All RockyLinux versions processed!"
-        if (( uploaded_images == 0 )); then echo "No images were published" >&2; exit 1; fi
+        if (( uploaded_images != expected_images )); then echo "Published $uploaded_images of $expected_images configured images" >&2; exit 1; fi
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct

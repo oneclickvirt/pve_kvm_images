@@ -17,26 +17,27 @@ jobs:
     - name: Build Ubuntu Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\n# 定义版本信息 (从新到旧)\ndeclare -A\
         \ ubuntu_versions\nubuntu_versions[\"24.04\"]=\"noble\"\nubuntu_versions[\"22.04\"]=\"jammy\" \nubuntu_versions[\"\
-        20.04\"]=\"focal\"\nubuntu_versions[\"18.04\"]=\"bionic\"\n# 按版本顺序处理 (从新到旧)\nfor version in \"24.04\" \"\
-        22.04\" \"20.04\" \"18.04\"; do\n    codename=${ubuntu_versions[$version]}\n    version_clean=${version//./}\n\
-        \    echo \"=== Processing Ubuntu $version ($codename) ===\"\n    # 清理之前的文件\n    rm -f ubuntu-${version}.qcow2\
-        \ ubuntu-${version}-custom.qcow2 ubuntu${version_clean}.qcow2\n    # 下载镜像\n    echo \"Downloading Ubuntu\
-        \ $version Cloud Image\"\n    download_url=\"https://cloud-images.ubuntu.com/${codename}/current/${codename}-server-cloudimg-amd64.img\"\
-        \n    if ! axel -n 8 -o ubuntu-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel\
-        \ failed, trying with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o ubuntu-${version}.qcow2\
-        \ \"$download_url\"; then\n            echo \"Failed to download Ubuntu $version, skipping...\"\n      \
-        \      rm -f ubuntu-${version}.qcow2\n            continue\n        fi\n    fi\n    if [ ! -f \"ubuntu-${version}.qcow2\"\
-        \ ] || [ $(stat -c %s \"ubuntu-${version}.qcow2\") -lt 10485760 ]; then\n        echo \"Download failed\
-        \ or file too small for Ubuntu $version, skipping...\"\n        rm -f ubuntu-${version}.qcow2\n        continue\n\
-        \    fi\n    chmod 644 ubuntu-${version}.qcow2\n    # 自定义镜像\n    echo \"Customizing Ubuntu $version image\"\
-        \n    \n    # 配置阿里云源\n    if [ \"$version\" = \"24.04\" ] || [ \"$version\" = \"24.10\" ] || [ \"$version\"\
-        \ = \"25.04\" ]; then\n        timeout --kill-after=30s 45m virt-customize -a ubuntu-${version}.qcow2 \\\
-        \n          --run-command \"rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true\" \\\n    \
-        \      --run-command \"printf 'Types: deb\\nURIs: https://mirrors.aliyun.com/ubuntu\\nSuites: ${codename}\
-        \ ${codename}-updates ${codename}-backports ${codename}-security\\nComponents: main restricted universe\
-        \ multiverse\\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\\n' > /etc/apt/sources.list.d/aliyun.sources\
-        \ || true\" || true\n    else\n        timeout --kill-after=30s 45m virt-customize -a ubuntu-${version}.qcow2\
-        \ \\\n          --run-command \"if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then sed -i 's|URIs: http://archive.ubuntu.com/ubuntu|URIs:\
+        20.04\"]=\"focal\"\nubuntu_versions[\"18.04\"]=\"bionic\"\n# 按版本顺序处理 (从新到旧)\nimage_versions=(24.04 22.04\
+        \ 20.04 18.04)\nexpected_images=${#image_versions[@]}\nfor version in \"${image_versions[@]}\"; do\n   \
+        \ codename=${ubuntu_versions[$version]}\n    version_clean=${version//./}\n    echo \"=== Processing Ubuntu\
+        \ $version ($codename) ===\"\n    # 清理之前的文件\n    rm -f ubuntu-${version}.qcow2 ubuntu-${version}-custom.qcow2\
+        \ ubuntu${version_clean}.qcow2\n    # 下载镜像\n    echo \"Downloading Ubuntu $version Cloud Image\"\n    download_url=\"\
+        https://cloud-images.ubuntu.com/${codename}/current/${codename}-server-cloudimg-amd64.img\"\n    if ! axel\
+        \ -n 8 -o ubuntu-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo \"Axel failed, trying\
+        \ with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o ubuntu-${version}.qcow2 \"$download_url\"\
+        ; then\n            echo \"Failed to download Ubuntu $version, skipping...\"\n            rm -f ubuntu-${version}.qcow2\n\
+        \            continue\n        fi\n    fi\n    if [ ! -f \"ubuntu-${version}.qcow2\" ] || [ $(stat -c %s\
+        \ \"ubuntu-${version}.qcow2\") -lt 10485760 ]; then\n        echo \"Download failed or file too small for\
+        \ Ubuntu $version, skipping...\"\n        rm -f ubuntu-${version}.qcow2\n        continue\n    fi\n    chmod\
+        \ 644 ubuntu-${version}.qcow2\n    # 自定义镜像\n    echo \"Customizing Ubuntu $version image\"\n    \n    #\
+        \ 配置阿里云源\n    if [ \"$version\" = \"24.04\" ] || [ \"$version\" = \"24.10\" ] || [ \"$version\" = \"25.04\"\
+        \ ]; then\n        timeout --kill-after=30s 45m virt-customize -a ubuntu-${version}.qcow2 \\\n         \
+        \ --run-command \"rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true\" \\\n          --run-command\
+        \ \"printf 'Types: deb\\nURIs: https://mirrors.aliyun.com/ubuntu\\nSuites: ${codename} ${codename}-updates\
+        \ ${codename}-backports ${codename}-security\\nComponents: main restricted universe multiverse\\nSigned-By:\
+        \ /usr/share/keyrings/ubuntu-archive-keyring.gpg\\n' > /etc/apt/sources.list.d/aliyun.sources || true\"\
+        \ || true\n    else\n        timeout --kill-after=30s 45m virt-customize -a ubuntu-${version}.qcow2 \\\n\
+        \          --run-command \"if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then sed -i 's|URIs: http://archive.ubuntu.com/ubuntu|URIs:\
         \ https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; sed -i 's|URIs: http://security.ubuntu.com/ubuntu|URIs:\
         \ https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources; fi || true\" \\\n       \
         \   --run-command \"for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f \\\"\\$f\\\"\
@@ -119,7 +120,8 @@ jobs:
         \ size: $file_size bytes\"\n        fi\n    fi\n    # 清理当前版本的文件\n    echo \"Cleaning up files for Ubuntu\
         \ $version\"\n    rm -f ubuntu-${version}.qcow2 ubuntu${version_clean}.qcow2\n    echo \"=== Completed processing\
         \ Ubuntu $version ===\"\n    echo \"\"\ndone\necho \"All Ubuntu versions processed!\"\n\nif (( uploaded_images\
-        \ == 0 )); then echo \"No images were published\" >&2; exit 1; fi\n"
+        \ != expected_images )); then echo \"Published $uploaded_images of $expected_images configured images\"\
+        \ >&2; exit 1; fi\n"
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
