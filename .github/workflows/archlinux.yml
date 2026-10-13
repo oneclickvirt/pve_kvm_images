@@ -1,214 +1,217 @@
 name: Build Arch Linux Cloud Images
-on:
-  schedule:
-    - cron: "34 19 * * *"
-  workflow_dispatch:
-
 jobs:
   build_archlinux_cloud_images:
-    runs-on: pve-1
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v2
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: check path
+      run: |
+        pwd
+    - name: Configure Git
+      run: |
+        git config --global user.name "daily-update"
+        git config --global user.email "tg@spiritlhl.top"
+    - name: Environment preparation
+      run: |
+        set -euo pipefail
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools
+        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+    - name: Build Arch Linux Images
+      run: |
+        set -euo pipefail
+        uploaded_images=0
+        export LIBGUESTFS_BACKEND=direct
+        export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
+        echo "=== Processing Arch Linux ==="
+        rm -f archlinux.qcow2 archlinux-custom.qcow2 archlinux-latest.qcow2
+        echo "Downloading Arch Linux Cloud Image"
+        download_success=0
+        for download_url in \
+            "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+            "https://europe.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+            "https://america.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+            "https://asia.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
+            "https://mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"; do
+            echo "Trying mirror: $download_url"
+            rm -f archlinux.qcow2
+            if axel -n 8 -o archlinux.qcow2 "$download_url" 2>/dev/null; then
+                :
+            else
+                curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 300 -o archlinux.qcow2 "$download_url" 2>/dev/null || true
+            fi
+            if [ -f "archlinux.qcow2" ] && [ $(stat -c %s "archlinux.qcow2") -gt 10485760 ]; then
+                echo "Successfully downloaded from: $download_url"
+                download_success=1
+                break
+            fi
+            rm -f archlinux.qcow2
+        done
+        if [ $download_success -ne 1 ]; then
+            echo "Failed to download Arch Linux from all mirrors, exiting..."
+            exit 1
+        fi
+        chmod 644 archlinux.qcow2
+        # 先检查镜像信息并动态检测根分区
+        echo "Checking image info..."
+        virt-filesystems -a archlinux.qcow2 --long -h --uuid || true
+        echo "Detecting root partition..."
+        root_part=$(virt-filesystems -a archlinux.qcow2 --filesystems --long 2>/dev/null | awk '/ext4|btrfs|xfs/{print $1}' | tail -1 || echo "")
+        if [ -z "$root_part" ]; then
+            root_part="/dev/sda3"
+            echo "Could not detect root partition automatically, using default: $root_part"
+        else
+            echo "Detected root partition: $root_part"
+        fi
+        echo "Creating expanded image..."
+        qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
+        echo "Resizing partitions into expanded image..."
+        if virt-resize --expand "$root_part" archlinux.qcow2 archlinux-expanded.qcow2; then
+            echo "virt-resize succeeded"
+        else
+            echo "virt-resize failed with $root_part, trying /dev/sda2 as fallback..."
+            rm -f archlinux-expanded.qcow2
+            qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
+            if virt-resize --expand /dev/sda2 archlinux.qcow2 archlinux-expanded.qcow2; then
+                echo "virt-resize succeeded with /dev/sda2"
+            else
+                echo "virt-resize failed, falling back to direct copy+resize..."
+                rm -f archlinux-expanded.qcow2
+                cp archlinux.qcow2 archlinux-expanded.qcow2
+                qemu-img resize archlinux-expanded.qcow2 +3G
+            fi
+        fi
+        echo "Customizing Arch Linux image - Phase 1: Basic Setup"
+        if ! virt-customize -a archlinux-expanded.qcow2 \
+          --smp 1 \
+          --timezone Asia/Hong_Kong \
+          --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
+          --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true"; then
+            echo "Failed to setup basic configuration, exiting..."
+            rm -f archlinux.qcow2 archlinux-expanded.qcow2
+            exit 1
+        fi
 
-      - name: check path
-        run: |
-          pwd
+        echo "Customizing Arch Linux image - Phase 2: GRUB and Services"
+        if ! virt-customize -a archlinux-expanded.qcow2 \
+          --run-command "grub-mkconfig -o /boot/grub/grub.cfg || grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
+          --run-command "systemctl enable serial-getty@ttyS1.service || true" \
+          --run-command "sync"; then
+            echo "Failed to configure GRUB and services, exiting..."
+            rm -f archlinux.qcow2 archlinux-expanded.qcow2
+            exit 1
+        fi
+        sleep 5
 
-      - name: Configure Git
-        run: |
-          git config --global user.name "daily-update"
-          git config --global user.email "tg@spiritlhl.top"
+        echo "Customizing Arch Linux image - Phase 3: Package configuration"
+        # 配置阿里云源并预装软件包（编译阶段完成，减少首次启动时间）
+        if ! virt-customize -a archlinux-expanded.qcow2 \
+          --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist || true" \
+          --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf || true" \
+          --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+          --run-command "pacman-key --init || true" \
+          --run-command "pacman-key --populate archlinux || true" \
+          --run-command "pacman -Sy --noconfirm archlinux-keyring || true" \
+          --run-command "pacman -Syu --noconfirm || true" \
+          --run-command "pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh || true" \
+          --run-command "(pacman -S --noconfirm spice-vdagent bind bind-tools || true)" \
+          --run-command "systemctl enable qemu-guest-agent || true" \
+          --run-command "systemctl enable sshd || true" \
+          --run-command "pacman -Scc --noconfirm || true"; then
+            echo "Failed to configure Arch Linux, exiting..."
+            rm -f archlinux.qcow2 archlinux-expanded.qcow2
+            exit 1
+        fi
+        echo "Configuring SSH and root access for Arch Linux..."
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "systemctl enable sshd || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config || true"
+        echo "Configuring qemu-guest-agent for Arch Linux..."
+        echo "Setting root password and MOTD for Arch Linux..."
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo '' > /etc/motd"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+        # 安全加固：禁用algif_aead模块（CVE防护）
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
+        echo "Compressing Arch Linux image"
+        if ! TMPDIR="$(pwd)" timeout --kill-after=30s 45m virt-sparsify --compress --check-tmpdir=ignore archlinux-expanded.qcow2 archlinux-custom.qcow2; then
+            echo "Failed to compress Arch Linux image, exiting..."
+            rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-custom.qcow2
+            exit 1
+        fi
+        mv archlinux-custom.qcow2 archlinux-latest.qcow2
+        ls -lh archlinux-latest.qcow2
+        file="archlinux-latest.qcow2"
+        if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
+            echo "Processing file: $file"
+            release_id=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 120 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/archlinux" | jq -r '.id')
+            if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
+                echo "Release 'archlinux' not found, please create it first"
+                rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-latest.qcow2
+                exit 1
+            fi
+            echo "Found release ID: $release_id"
+            echo "Checking if $file already exists in release..."
+            existing_asset_id=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 120 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
+            if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
+                echo "Asset $file already exists in release, deleting existing asset..."
+                delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
+                echo "$delete_response"
+                if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
+                    echo "Existing asset deleted successfully."
+                else
+                    echo "Failed to delete existing asset for $file. Skipping file upload..."
+                    rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-latest.qcow2
+                    exit 1
+                fi
+            else
+                echo "No existing $file file found in release."
+            fi
+            echo "Uploading $file to release..."
+            upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              -T "$file" \
+              "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
+            echo "Upload response: $upload_response"
+            if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
+                echo "Successfully uploaded $file"
+                              uploaded_images=$((uploaded_images + 1))
+                download_url=$(echo "$upload_response" | jq -r '.browser_download_url')
+                echo "Download URL: $download_url"
+            else
+                echo "Failed to upload $file"
+                echo "Response: $upload_response"
+            fi
+        else
+            echo "File $file does not exist, is too small (< 10MB), or is too large (> 2GB)"
+            if [ -f "$file" ]; then
+                file_size=$(stat -c %s "$file")
+                echo "File size: $file_size bytes"
+            fi
+        fi
+        echo "Cleaning up files for Arch Linux"
+        rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-latest.qcow2
+        echo "=== Completed processing Arch Linux ==="
 
-      - name: Environment preparation
-        run: |
-          export LIBGUESTFS_DEBUG=1
-          export LIBGUESTFS_TRACE=1
-          export LIBGUESTFS_BACKEND=direct
-          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
-          sudo bash -c 'set -e; shopt -s nullglob; for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; cp -a "$f" "$f.bak" 2>/dev/null || true; sed -i -E -e "s#(http|https)://deb.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://httpredir.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://security.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://security-cdn.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://ftp.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://archive.ubuntu.com#https://mirrors.aliyun.com#g" -e "s#(http|https)://security.ubuntu.com#https://mirrors.aliyun.com#g" "$f"; done; apt-get update -y'
-          sudo apt-get install -y curl wget unzip zip jq
-          sudo apt-get install -y libguestfs-tools rng-tools curl axel
-          sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
-
-      - name: Build Arch Linux Images
-        run: |
-          export LIBGUESTFS_DEBUG=1
-          export LIBGUESTFS_TRACE=1
-          export LIBGUESTFS_BACKEND=direct
-          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
-          echo "=== Processing Arch Linux ==="
-          rm -f archlinux.qcow2 archlinux-custom.qcow2 archlinux-latest.qcow2
-          echo "Downloading Arch Linux Cloud Image"
-          download_success=0
-          for download_url in \
-              "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
-              "https://europe.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
-              "https://america.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
-              "https://asia.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" \
-              "https://mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"; do
-              echo "Trying mirror: $download_url"
-              rm -f archlinux.qcow2
-              if axel -n 8 -o archlinux.qcow2 "$download_url" 2>/dev/null; then
-                  :
-              else
-                  curl -L --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 300 -o archlinux.qcow2 "$download_url" 2>/dev/null || true
-              fi
-              if [ -f "archlinux.qcow2" ] && [ $(stat -c %s "archlinux.qcow2") -gt 10485760 ]; then
-                  echo "Successfully downloaded from: $download_url"
-                  download_success=1
-                  break
-              fi
-              rm -f archlinux.qcow2
-          done
-          if [ $download_success -ne 1 ]; then
-              echo "Failed to download Arch Linux from all mirrors, exiting..."
-              exit 1
-          fi
-          chmod 644 archlinux.qcow2
-          # 先检查镜像信息并动态检测根分区
-          echo "Checking image info..."
-          virt-filesystems -a archlinux.qcow2 --long -h --uuid || true
-          echo "Detecting root partition..."
-          root_part=$(virt-filesystems -a archlinux.qcow2 --filesystems --long 2>/dev/null | awk '/ext4|btrfs|xfs/{print $1}' | tail -1 || echo "")
-          if [ -z "$root_part" ]; then
-              root_part="/dev/sda3"
-              echo "Could not detect root partition automatically, using default: $root_part"
-          else
-              echo "Detected root partition: $root_part"
-          fi
-          echo "Creating expanded image..."
-          qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
-          echo "Resizing partitions into expanded image..."
-          if virt-resize --expand "$root_part" archlinux.qcow2 archlinux-expanded.qcow2; then
-              echo "virt-resize succeeded"
-          else
-              echo "virt-resize failed with $root_part, trying /dev/sda2 as fallback..."
-              rm -f archlinux-expanded.qcow2
-              qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
-              if virt-resize --expand /dev/sda2 archlinux.qcow2 archlinux-expanded.qcow2; then
-                  echo "virt-resize succeeded with /dev/sda2"
-              else
-                  echo "virt-resize failed, falling back to direct copy+resize..."
-                  rm -f archlinux-expanded.qcow2
-                  cp archlinux.qcow2 archlinux-expanded.qcow2
-                  qemu-img resize archlinux-expanded.qcow2 +3G
-              fi
-          fi
-          echo "Customizing Arch Linux image - Phase 1: Basic Setup"
-          if ! virt-customize -a archlinux-expanded.qcow2 \
-            --smp 1 \
-            --timezone Asia/Hong_Kong \
-            --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
-            --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true"; then
-              echo "Failed to setup basic configuration, exiting..."
-              rm -f archlinux.qcow2 archlinux-expanded.qcow2
-              exit 1
-          fi
-          
-          echo "Customizing Arch Linux image - Phase 2: GRUB and Services"
-          if ! virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "grub-mkconfig -o /boot/grub/grub.cfg || grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
-            --run-command "systemctl enable serial-getty@ttyS1.service || true" \
-            --run-command "sync"; then
-              echo "Failed to configure GRUB and services, exiting..."
-              rm -f archlinux.qcow2 archlinux-expanded.qcow2
-              exit 1
-          fi
-          sleep 5
-          
-          echo "Customizing Arch Linux image - Phase 3: Package configuration"
-          # 配置阿里云源并预装软件包（编译阶段完成，减少首次启动时间）
-          if ! virt-customize -a archlinux-expanded.qcow2 \
-            --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist || true" \
-            --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf || true" \
-            --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-            --run-command "pacman-key --init || true" \
-            --run-command "pacman-key --populate archlinux || true" \
-            --run-command "pacman -Sy --noconfirm archlinux-keyring || true" \
-            --run-command "pacman -Syu --noconfirm || true" \
-            --run-command "pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh || true" \
-            --run-command "(pacman -S --noconfirm spice-vdagent bind bind-tools || true)" \
-            --run-command "systemctl enable qemu-guest-agent || true" \
-            --run-command "systemctl enable sshd || true" \
-            --run-command "pacman -Scc --noconfirm || true"; then
-              echo "Failed to configure Arch Linux, exiting..."
-              rm -f archlinux.qcow2 archlinux-expanded.qcow2
-              exit 1
-          fi
-          echo "Configuring SSH and root access for Arch Linux..."
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "systemctl enable sshd || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config || true"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config || true"
-          echo "Configuring qemu-guest-agent for Arch Linux..."
-          echo "Setting root password and MOTD for Arch Linux..."
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo '' > /etc/motd"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
-          # 安全加固：禁用algif_aead模块（CVE防护）
-          sudo virt-customize -v -x -a archlinux-expanded.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
-          echo "Compressing Arch Linux image"
-          if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore archlinux-expanded.qcow2 archlinux-custom.qcow2; then
-              echo "Failed to compress Arch Linux image, exiting..."
-              rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-custom.qcow2
-              exit 1
-          fi
-          mv archlinux-custom.qcow2 archlinux-latest.qcow2
-          ls -lh archlinux-latest.qcow2
-          file="archlinux-latest.qcow2"
-          if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
-              echo "Processing file: $file"
-              release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/archlinux" | jq -r '.id')
-              if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
-                  echo "Release 'archlinux' not found, please create it first"
-                  rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-latest.qcow2
-                  exit 1
-              fi
-              echo "Found release ID: $release_id"
-              echo "Checking if $file already exists in release..."
-              existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
-              if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
-                  echo "Asset $file already exists in release, deleting existing asset..."
-                  delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
-                  echo "$delete_response"
-                  if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
-                      echo "Existing asset deleted successfully."
-                  else
-                      echo "Failed to delete existing asset for $file. Skipping file upload..."
-                      rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-latest.qcow2
-                      exit 1
-                  fi
-              else
-                  echo "No existing $file file found in release."
-              fi
-              echo "Uploading $file to release..."
-              upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                -H "Content-Type: application/octet-stream" \
-                -T "$file" \
-                "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
-              echo "Upload response: $upload_response"
-              if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
-                  echo "Successfully uploaded $file"
-                  download_url=$(echo "$upload_response" | jq -r '.browser_download_url')
-                  echo "Download URL: $download_url"
-              else
-                  echo "Failed to upload $file"
-                  echo "Response: $upload_response"
-              fi
-          else
-              echo "File $file does not exist, is too small (< 10MB), or is too large (> 2GB)"
-              if [ -f "$file" ]; then
-                  file_size=$(stat -c %s "$file")
-                  echo "File size: $file_size bytes"
-              fi
-          fi
-          echo "Cleaning up files for Arch Linux"
-          rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-latest.qcow2
-          echo "=== Completed processing Arch Linux ==="
+        if (( uploaded_images == 0 )); then echo "No images were published" >&2; exit 1; fi
+    timeout-minutes: 180
+    env:
+      LIBGUESTFS_BACKEND: direct
+      LIBGUESTFS_BACKEND_SETTINGS: passt:no
+'on':
+  schedule:
+  - cron: 34 19 * * *
+  workflow_dispatch: null
+permissions:
+  contents: write
+concurrency:
+  group: cloud-image-${{ github.workflow }}
+  cancel-in-progress: false

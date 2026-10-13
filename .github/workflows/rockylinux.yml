@@ -1,189 +1,191 @@
 name: Build RockyLinux Cloud Images
-on:
-  schedule:
-    - cron: "34 15 * * *"
-  workflow_dispatch:
-
 jobs:
   build_rockylinux_cloud_images:
-    runs-on: pve-1
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v2
-
-      - name: check path
-        run: |
-          pwd
-
-      - name: Configure Git
-        run: |
-          git config --global user.name "daily-update"
-          git config --global user.email "tg@spiritlhl.top"
-
-      - name: Environment preparation
-        run: |
-          export LIBGUESTFS_DEBUG=1
-          export LIBGUESTFS_TRACE=1
-          export LIBGUESTFS_BACKEND=direct
-          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
-          sudo bash -c 'set -e; shopt -s nullglob; for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; cp -a "$f" "$f.bak" 2>/dev/null || true; sed -i -E -e "s#(http|https)://deb.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://httpredir.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://security.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://security-cdn.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://ftp.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://archive.ubuntu.com#https://mirrors.aliyun.com#g" -e "s#(http|https)://security.ubuntu.com#https://mirrors.aliyun.com#g" "$f"; done; apt-get update -y'
-          sudo apt-get install -y curl wget unzip zip jq
-          sudo apt-get install -y libguestfs-tools rng-tools curl axel
-          sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
-
-      - name: Build RockyLinux Images
-        run: |
-          export LIBGUESTFS_DEBUG=1
-          export LIBGUESTFS_TRACE=1
-          export LIBGUESTFS_BACKEND=direct
-          export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
-          declare -A rockylinux_versions
-          rockylinux_versions["9"]="9"
-          rockylinux_versions["8"]="8"
-          for version in "9" "8"; do
-              echo "=== Processing RockyLinux $version ==="
-              rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
-              echo "Downloading RockyLinux $version Cloud Image"
-              download_url="https://download.rockylinux.org/pub/rocky/${version}/images/x86_64/Rocky-${version}-GenericCloud-Base.latest.x86_64.qcow2"
-              if ! axel -n 8 -o rockylinux-${version}.qcow2 "$download_url" 2>/dev/null; then
-                  echo "Axel failed, trying with curl"
-                  if ! curl -L --retry 3 --retry-delay 5 -o rockylinux-${version}.qcow2 "$download_url"; then
-                      echo "Failed to download RockyLinux $version, skipping..."
-                      rm -f rockylinux-${version}.qcow2
-                      continue
-                  fi
-              fi
-              if [ ! -f "rockylinux-${version}.qcow2" ] || [ $(stat -c %s "rockylinux-${version}.qcow2") -lt 10485760 ]; then
-                  echo "Download failed or file too small for RockyLinux $version, skipping..."
-                  rm -f rockylinux-${version}.qcow2
-                  continue
-              fi
-              chmod 644 rockylinux-${version}.qcow2
-              echo "Customizing RockyLinux $version image"
-              # 配置阿里云源
-              virt-customize -a rockylinux-${version}.qcow2 \
-                --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^#baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo 2>/dev/null || true" || true
-              # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
-              if ! virt-customize -a rockylinux-${version}.qcow2 \
-                --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
-                --timezone Asia/Hong_Kong \
-                --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
-                --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
-                --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
-                --run-command "systemctl enable serial-getty@ttyS1.service || true" \
-                --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-                --run-command "(dnf install -y epel-release --allowerasing || dnf install -y epel-release || true)" \
-                --run-command "dnf install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || true" \
-                --run-command "(dnf install -y spice-vdagent lldpad || true)" \
-                --run-command "systemctl enable qemu-guest-agent || true" \
-                --run-command "dnf -y autoremove && dnf -y clean all || true" \
-                --delete "/var/log/*.log" \
-                --truncate "/etc/machine-id"; then
-                  echo "Failed to configure RockyLinux $version, skipping..."
-                  rm -f rockylinux-${version}.qcow2
-                  continue
-              fi
-              echo "Fixing cloud-init configuration for RockyLinux $version..."
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*true/disable_root: false/g' /etc/cloud/cloud.cfg"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*1/disable_root: 0/g' /etc/cloud/cloud.cfg"
-              echo "Configuring SSH and root access for RockyLinux $version..."
-              if [[ "$version" == "9" ]]; then
-                  echo "Applying RockyLinux 9 specific SSH configuration..."
-                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd || true"
-                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \; 2>/dev/null || true"
-                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \; 2>/dev/null || true"
-                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \; 2>/dev/null || true"
-              else
-                  echo "Applying RockyLinux 8 specific SSH configuration..."
-                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd || true"
-              fi
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*Port.*/Port 22/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*AddressFamily.*/AddressFamily any/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress ::.*/ListenAddress ::/g' /etc/ssh/sshd_config"
-              echo "Configuring qemu-guest-agent for RockyLinux $version..."
-              echo "Setting enhanced MOTD and root password for RockyLinux $version..."
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'RockyLinux ${version} Cloud Image' >> /etc/motd"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo 'Default root password: oneclickvirt' >> /etc/motd"
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
-              echo "Applying security and performance tweaks for RockyLinux $version..."
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "systemctl enable crond || true"
-              if [[ "$version" == "9" ]]; then
-                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "dnf clean all || true"
-              else
-                  sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "yum clean all || true"
-              fi
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
-              # 安全加固：禁用algif_aead模块（CVE防护）
-              sudo virt-customize -v -x -a rockylinux-${version}.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
-              echo "Creating backup and finalizing RockyLinux $version image"
-              cp rockylinux-${version}.qcow2 rockylinux-${version}.qcow2.bak
-              echo "Compressing RockyLinux $version image"
-              if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2; then
-                  echo "Failed to compress RockyLinux $version image, skipping..."
-                  rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux-${version}.qcow2.bak
-                  continue
-              fi
-              mv rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
-              ls -lh rockylinux${version}.qcow2
-              file="rockylinux${version}.qcow2"
-              if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
-                  echo "Processing file: $file"
-                  release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/rockylinux" | jq -r '.id')
-                  if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
-                      echo "Release 'rockylinux' not found, please create it first"
-                      rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
-                      continue
-                  fi
-                  echo "Found release ID: $release_id"
-                  echo "Checking if $file already exists in release..."
-                  existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
-                  if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
-                      echo "Asset $file already exists in release, deleting existing asset..."
-                      delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
-                      echo "$delete_response"
-                      if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
-                          echo "Existing asset deleted successfully."
-                      else
-                          echo "Failed to delete existing asset for $file. Skipping file upload..."
-                          rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
-                          continue
-                      fi
-                  else
-                      echo "No existing $file file found in release."
-                  fi
-                  echo "Uploading $file to release..."
-                  upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                    -H "Content-Type: application/octet-stream" \
-                    -T "$file" \
-                    "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
-                  echo "Upload response: $upload_response"
-                  if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
-                      echo "Successfully uploaded $file"
-                      download_url=$(echo "$upload_response" | jq -r '.browser_download_url')
-                      echo "Download URL: $download_url"
-                  else
-                      echo "Failed to upload $file"
-                      echo "Response: $upload_response"
-                  fi
-              else
-                  echo "File $file does not exist, is too small (< 10MB), or is too large (> 2GB)"
-                  if [ -f "$file" ]; then
-                      file_size=$(stat -c %s "$file")
-                      echo "File size: $file_size bytes"
-                  fi
-              fi
-              echo "Cleaning up files for RockyLinux $version"
-              rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
-              echo "=== Completed processing RockyLinux $version ==="
-              echo ""
-          done
-          echo "All RockyLinux versions processed!"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: check path
+      run: |
+        pwd
+    - name: Configure Git
+      run: |
+        git config --global user.name "daily-update"
+        git config --global user.email "tg@spiritlhl.top"
+    - name: Environment preparation
+      run: |
+        set -euo pipefail
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools
+        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+    - name: Build RockyLinux Images
+      run: |
+        set -euo pipefail
+        uploaded_images=0
+        export LIBGUESTFS_BACKEND=direct
+        export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
+        declare -A rockylinux_versions
+        rockylinux_versions["9"]="9"
+        rockylinux_versions["8"]="8"
+        for version in "9" "8"; do
+            echo "=== Processing RockyLinux $version ==="
+            rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
+            echo "Downloading RockyLinux $version Cloud Image"
+            download_url="https://download.rockylinux.org/pub/rocky/${version}/images/x86_64/Rocky-${version}-GenericCloud-Base.latest.x86_64.qcow2"
+            if ! axel -n 8 -o rockylinux-${version}.qcow2 "$download_url" 2>/dev/null; then
+                echo "Axel failed, trying with curl"
+                if ! curl -fL --retry 3 --retry-delay 5 -o rockylinux-${version}.qcow2 "$download_url"; then
+                    echo "Failed to download RockyLinux $version, skipping..."
+                    rm -f rockylinux-${version}.qcow2
+                    continue
+                fi
+            fi
+            if [ ! -f "rockylinux-${version}.qcow2" ] || [ $(stat -c %s "rockylinux-${version}.qcow2") -lt 10485760 ]; then
+                echo "Download failed or file too small for RockyLinux $version, skipping..."
+                rm -f rockylinux-${version}.qcow2
+                continue
+            fi
+            chmod 644 rockylinux-${version}.qcow2
+            echo "Customizing RockyLinux $version image"
+            # 配置阿里云源
+            virt-customize -a rockylinux-${version}.qcow2 \
+              --run-command "sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^#baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' -e 's|^baseurl=https://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' /etc/yum.repos.d/rocky*.repo 2>/dev/null || true" || true
+            # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
+            if ! virt-customize -a rockylinux-${version}.qcow2 \
+              --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
+              --timezone Asia/Hong_Kong \
+              --append-line "/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting" \
+              --append-line "/etc/default/grub:GRUB_DISABLE_OS_PROBER=true" \
+              --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg || true" \
+              --run-command "systemctl enable serial-getty@ttyS1.service || true" \
+              --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
+              --run-command "(dnf install -y epel-release --allowerasing || dnf install -y epel-release || true)" \
+              --run-command "dnf install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || true" \
+              --run-command "(dnf install -y spice-vdagent lldpad || true)" \
+              --run-command "systemctl enable qemu-guest-agent || true" \
+              --run-command "dnf -y autoremove && dnf -y clean all || true" \
+              --delete "/var/log/*.log" \
+              --truncate "/etc/machine-id"; then
+                echo "Failed to configure RockyLinux $version, skipping..."
+                rm -f rockylinux-${version}.qcow2
+                continue
+            fi
+            echo "Fixing cloud-init configuration for RockyLinux $version..."
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*true/disable_root: false/g' /etc/cloud/cloud.cfg"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/disable_root:[[:space:]]*1/disable_root: 0/g' /etc/cloud/cloud.cfg"
+            echo "Configuring SSH and root access for RockyLinux $version..."
+            if [[ "$version" == "9" ]]; then
+                echo "Applying RockyLinux 9 specific SSH configuration..."
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd || true"
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \; 2>/dev/null || true"
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \; 2>/dev/null || true"
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \; 2>/dev/null || true"
+            else
+                echo "Applying RockyLinux 8 specific SSH configuration..."
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd || true"
+            fi
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*Port.*/Port 22/g' /etc/ssh/sshd_config"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*AddressFamily.*/AddressFamily any/g' /etc/ssh/sshd_config"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*ListenAddress ::.*/ListenAddress ::/g' /etc/ssh/sshd_config"
+            echo "Configuring qemu-guest-agent for RockyLinux $version..."
+            echo "Setting enhanced MOTD and root password for RockyLinux $version..."
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "echo '' > /etc/motd"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "echo 'RockyLinux ${version} Cloud Image' >> /etc/motd"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "echo 'Default root password: oneclickvirt' >> /etc/motd"
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
+            echo "Applying security and performance tweaks for RockyLinux $version..."
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "systemctl enable crond || true"
+            if [[ "$version" == "9" ]]; then
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "dnf clean all || true"
+            else
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "yum clean all || true"
+            fi
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
+            # 安全加固：禁用algif_aead模块（CVE防护）
+            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
+            echo "Creating backup and finalizing RockyLinux $version image"
+            cp rockylinux-${version}.qcow2 rockylinux-${version}.qcow2.bak
+            echo "Compressing RockyLinux $version image"
+            if ! TMPDIR="$(pwd)" timeout --kill-after=30s 45m virt-sparsify --compress --check-tmpdir=ignore rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2; then
+                echo "Failed to compress RockyLinux $version image, skipping..."
+                rm -f rockylinux-${version}.qcow2 rockylinux-${version}-custom.qcow2 rockylinux-${version}.qcow2.bak
+                continue
+            fi
+            mv rockylinux-${version}-custom.qcow2 rockylinux${version}.qcow2
+            ls -lh rockylinux${version}.qcow2
+            file="rockylinux${version}.qcow2"
+            if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
+                echo "Processing file: $file"
+                release_id=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 120 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/rockylinux" | jq -r '.id')
+                if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
+                    echo "Release 'rockylinux' not found, please create it first"
+                    rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
+                    continue
+                fi
+                echo "Found release ID: $release_id"
+                echo "Checking if $file already exists in release..."
+                existing_asset_id=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 120 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
+                if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
+                    echo "Asset $file already exists in release, deleting existing asset..."
+                    delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
+                    echo "$delete_response"
+                    if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
+                        echo "Existing asset deleted successfully."
+                    else
+                        echo "Failed to delete existing asset for $file. Skipping file upload..."
+                        rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
+                        continue
+                    fi
+                else
+                    echo "No existing $file file found in release."
+                fi
+                echo "Uploading $file to release..."
+                upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                  -H "Content-Type: application/octet-stream" \
+                  -T "$file" \
+                  "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
+                echo "Upload response: $upload_response"
+                if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
+                    echo "Successfully uploaded $file"
+                              uploaded_images=$((uploaded_images + 1))
+                    download_url=$(echo "$upload_response" | jq -r '.browser_download_url')
+                    echo "Download URL: $download_url"
+                else
+                    echo "Failed to upload $file"
+                    echo "Response: $upload_response"
+                fi
+            else
+                echo "File $file does not exist, is too small (< 10MB), or is too large (> 2GB)"
+                if [ -f "$file" ]; then
+                    file_size=$(stat -c %s "$file")
+                    echo "File size: $file_size bytes"
+                fi
+            fi
+            echo "Cleaning up files for RockyLinux $version"
+            rm -f rockylinux-${version}.qcow2 rockylinux${version}.qcow2 rockylinux-${version}.qcow2.bak
+            echo "=== Completed processing RockyLinux $version ==="
+            echo ""
+        done
+        echo "All RockyLinux versions processed!"
+        if (( uploaded_images == 0 )); then echo "No images were published" >&2; exit 1; fi
+    timeout-minutes: 180
+    env:
+      LIBGUESTFS_BACKEND: direct
+      LIBGUESTFS_BACKEND_SETTINGS: passt:no
+'on':
+  schedule:
+  - cron: 34 15 * * *
+  workflow_dispatch: null
+permissions:
+  contents: write
+concurrency:
+  group: cloud-image-${{ github.workflow }}
+  cancel-in-progress: false

@@ -1,248 +1,141 @@
 name: Build Alpine Cloud Images
-on:
-    schedule:
-        - cron: "34 16 * * *"
-    workflow_dispatch:
-
 jobs:
-    build_alpine_cloud_images:
-        runs-on: pve-1
-        steps:
-            - uses: actions/checkout@v2
-
-            - name: check path
-              run: |
-                  pwd
-
-            - name: Configure Git
-              run: |
-                  git config --global user.name "daily-update"
-                  git config --global user.email "tg@spiritlhl.top"
-
-            - name: Environment preparation
-              run: |
-                  export LIBGUESTFS_DEBUG=1
-                  export LIBGUESTFS_TRACE=1
-                  export LIBGUESTFS_BACKEND=direct
-                  export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
-                  sudo bash -c 'set -e; shopt -s nullglob; for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; cp -a "$f" "$f.bak" 2>/dev/null || true; sed -i -E -e "s#(http|https)://deb.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://httpredir.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://security.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://security-cdn.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://ftp.debian.org#https://mirrors.aliyun.com#g" -e "s#(http|https)://archive.ubuntu.com#https://mirrors.aliyun.com#g" -e "s#(http|https)://security.ubuntu.com#https://mirrors.aliyun.com#g" "$f"; done; apt-get update -y'
-                  sudo apt-get install -y curl wget unzip zip jq
-                  sudo apt-get install -y libguestfs-tools rng-tools curl axel
-                  sudo apt-get install -y libguestfs-tools rng-tools curl axel --fix-missing
-
-            - name: Build Alpine Images
-              run: |
-                  export LIBGUESTFS_DEBUG=1
-                  export LIBGUESTFS_TRACE=1
-                  export LIBGUESTFS_BACKEND=direct
-                  export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
-                  declare -A alpine_versions
-                  alpine_versions["3.22"]="3.22"
-                  alpine_versions["3.21"]="3.21"
-                  alpine_versions["3.20"]="3.20"
-                  get_latest_timestamp() {
-                      local version=$1
-                      local base_url="https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/"
-                      echo "Fetching directory listing for Alpine $version..." >&2
-                      local raw_html
-                      raw_html=$(curl -s --connect-timeout 15 --max-time 30 "$base_url" 2>/dev/null) || raw_html=""
-                      # Handle both URL-encoded (%3A) and literal colon forms
-                      timestamps=$(echo "$raw_html" | grep -oE '[0-9]{8}_[0-9]{2}(%3A|:)[0-9]{2}' | sed -E 's/([0-9]{8}_[0-9]{2}):([0-9]{2})/\1%3A\2/g' | sort -r | head -10)
-                      if [ -n "$timestamps" ]; then
-                          for timestamp in $timestamps; do
-                              test_url="${base_url}${timestamp}/disk.qcow2"
-                              echo "Testing timestamp from listing: $timestamp" >&2
-                              if curl --head --fail --connect-timeout 5 --max-time 10 "$test_url" >/dev/null 2>&1; then
-                                  echo "$timestamp"
-                                  return 0
-                              fi
-                          done
-                      fi
-                      echo "No timestamps found from listing, trying alternative method..." >&2
-                      current_date=$(date +%Y%m%d)
-                      for days_back in {0..14}; do
-                          test_date=$(date -d "$current_date -$days_back days" +%Y%m%d)
-                          for hour in 13 12 11 10 09 08 07 06 05 14 15 16 17 18; do
-                              for minute in 00 30; do
-                                  timestamp="${test_date}_${hour}%3A${minute}"
-                                  test_url="${base_url}${timestamp}/disk.qcow2"
-                                  echo "Testing constructed timestamp: $timestamp" >&2
-                                  if curl --head --fail --connect-timeout 5 --max-time 10 "$test_url" >/dev/null 2>&1; then
-                                      echo "$timestamp"
-                                      return 0
-                                  fi
-                              done
-                          done
-                      done
-                      return 1
-                  }
-
-                  download_alpine_image() {
-                      local version=$1
-                      local output_file=$2
-                      echo "Getting latest timestamp for Alpine $version..."
-                      timestamp=$(get_latest_timestamp "$version" || echo "")
-                      if [ -z "$timestamp" ]; then
-                          echo "Failed to get valid timestamp for Alpine $version"
-                          return 1
-                      fi
-                      download_url="https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/${timestamp}/disk.qcow2"
-                      echo "Found timestamp: $timestamp"
-                      echo "Download URL: $download_url"
-                      echo "Downloading with axel..."
-                      if axel -n 8 -o "$output_file" "$download_url" 2>/dev/null; then
-                          if [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
-                              echo "Successfully downloaded with axel: $(stat -c %s "$output_file") bytes"
-                              return 0
-                          fi
-                      fi
-                      echo "Axel failed, trying with curl..."
-                      if curl -L -o "$output_file" "$download_url" 2>/dev/null; then
-                          if [ -f "$output_file" ] && [ $(stat -c %s "$output_file") -gt 10485760 ]; then
-                              echo "Successfully downloaded with curl: $(stat -c %s "$output_file") bytes"
-                              return 0
-                          fi
-                      fi
-                      echo "Both download methods failed"
-                      rm -f "$output_file"
-                      return 1
-                  }
-
-                  for version in "3.22" "3.21" "3.20"; do
-                      echo "=== Processing Alpine $version ==="
-                      rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2 alpine${version}.qcow2
-                      
-                      echo "Downloading Alpine $version Cloud Image"
-                      if ! download_alpine_image "$version" "alpine-${version}.qcow2"; then
-                          echo "Failed to download Alpine $version, skipping..."
-                          continue
-                      fi
-                      
-                      if [ ! -f "alpine-${version}.qcow2" ] || [ $(stat -c %s "alpine-${version}.qcow2") -lt 10485760 ]; then
-                          echo "Download failed or file too small for Alpine $version, skipping..."
-                          rm -f alpine-${version}.qcow2
-                          continue
-                      fi
-                      
-                      chmod 644 alpine-${version}.qcow2
-                      
-                      echo "Customizing Alpine $version image"
-                      # 配置阿里云源
-                      virt-customize -a alpine-${version}.qcow2 \
-                        --run-command "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories || true" \
-                        --run-command "sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g' /etc/apk/repositories || true" || true
-                      # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）
-                      if ! virt-customize -a alpine-${version}.qcow2 \
-                        --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf" \
-                        --timezone Asia/Hong_Kong \
-                        --append-line "/etc/conf.d/ntpd:NTPD_OPTS=\"-N -p time.apple.com -p time.windows.com\"" \
-                        --run-command "apk update && apk upgrade || true" \
-                        --run-command "apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh openrc || true" \
-                        --run-command "echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent" \
-                        --run-command "echo 'name=QEMU Guest Agent' >> /etc/init.d/qemu-guest-agent" \
-                        --run-command "echo 'command=/usr/bin/qemu-ga' >> /etc/init.d/qemu-guest-agent" \
-                        --run-command "printf 'command_args=\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\"\n' >> /etc/init.d/qemu-guest-agent" \
-                        --run-command "echo 'pidfile=/run/qemu-guest-agent.pid' >> /etc/init.d/qemu-guest-agent" \
-                        --run-command "printf 'depend() { need localmount; after bootmisc; }\n' >> /etc/init.d/qemu-guest-agent" \
-                        --run-command "chmod +x /etc/init.d/qemu-guest-agent" \
-                        --run-command "rc-update add qemu-guest-agent boot || true" \
-                        --run-command "rc-update add sshd boot || true" \
-                        --run-command "apk cache clean || true" \
-                        --delete "/var/log/*.log" \
-                        --delete "/var/cache/apk/*"; then
-                          echo "Failed to configure Alpine $version, skipping..."
-                          rm -f alpine-${version}.qcow2
-                          continue
-                      fi
-                      
-                      echo "Configuring SSH and root access for Alpine $version..."
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "rc-update add sshd boot || true"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config || true"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config || true"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config || true"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config || true"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config || true"
-                      
-                      echo "Configuring qemu-guest-agent for Alpine $version..."
-                      
-                      echo "Setting root password and MOTD for Alpine $version..."
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '' > /etc/motd"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "echo '--by https://t.me/spiritlhl' >> /etc/motd"
-                      # 安全加固：禁用algif_aead模块（CVE防护）
-                      sudo virt-customize -v -x -a alpine-${version}.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
-                      
-                      echo "Compressing Alpine $version image"
-                      if ! TMPDIR="$(pwd)" virt-sparsify --compress --check-tmpdir=ignore alpine-${version}.qcow2 alpine-${version}-custom.qcow2; then
-                          echo "Failed to compress Alpine $version image, skipping..."
-                          rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2
-                          continue
-                      fi
-                      
-                      mv alpine-${version}-custom.qcow2 alpine${version}.qcow2
-                      ls -lh alpine${version}.qcow2
-                      
-                      file="alpine${version}.qcow2"
-                      if [ -f "$file" ] && [ $(stat -c %s "$file") -gt 10485760 ] && [ $(stat -c %s "$file") -le 2147483648 ]; then
-                          echo "Processing file: $file"
-                          
-                          release_id=$(curl -s -m 6 -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/alpine" | jq -r '.id')
-                          if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
-                              echo "Release 'alpine' not found, please create it first"
-                              rm -f alpine-${version}.qcow2 alpine${version}.qcow2
-                              continue
-                          fi
-                          
-                          echo "Found release ID: $release_id"
-                          
-                          echo "Checking if $file already exists in release..."
-                          existing_asset_id=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
-                          
-                          if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
-                              echo "Asset $file already exists in release, deleting existing asset..."
-                              delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
-                              echo "$delete_response"
-                              if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
-                                  echo "Existing asset deleted successfully."
-                              else
-                                  echo "Failed to delete existing asset for $file. Skipping file upload..."
-                                  rm -f alpine-${version}.qcow2 alpine${version}.qcow2
-                                  continue
-                              fi
-                          else
-                              echo "No existing $file file found in release."
-                          fi
-                          
-                          echo "Uploading $file to release..."
-                          upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                            -H "Content-Type: application/octet-stream" \
-                            -T "$file" \
-                            "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
-                          
-                          echo "Upload response: $upload_response"
-                          if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
-                              echo "Successfully uploaded $file"
-                              download_url=$(echo "$upload_response" | jq -r '.browser_download_url')
-                              echo "Download URL: $download_url"
-                          else
-                              echo "Failed to upload $file"
-                              echo "Response: $upload_response"
-                          fi
-                      else
-                          echo "File $file does not exist, is too small (< 10MB), or is too large (> 2GB)"
-                          if [ -f "$file" ]; then
-                              file_size=$(stat -c %s "$file")
-                              echo "File size: $file_size bytes"
-                          fi
-                      fi
-                      
-                      echo "Cleaning up files for Alpine $version"
-                      rm -f alpine-${version}.qcow2 alpine${version}.qcow2
-                      echo "=== Completed processing Alpine $version ==="
-                      echo ""
-                  done
-                  echo "All Alpine versions processed!"
+  build_alpine_cloud_images:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: check path
+      run: |
+        pwd
+    - name: Configure Git
+      run: |
+        git config --global user.name "daily-update"
+        git config --global user.email "tg@spiritlhl.top"
+    - name: Environment preparation
+      run: |
+        set -euo pipefail
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools
+        if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+    - name: Build Alpine Images
+      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
+        passt:no\"\ndeclare -A alpine_versions\nalpine_versions[\"3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"3.21\"\nalpine_versions[\"\
+        3.20\"]=\"3.20\"\nget_latest_timestamp() {\n    local version=$1\n    local base_url=\"https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/\"\
+        \n    echo \"Fetching directory listing for Alpine $version...\" >&2\n    local raw_html\n    raw_html=$(curl -s --connect-timeout\
+        \ 15 --max-time 30 \"$base_url\" 2>/dev/null) || raw_html=\"\"\n    # Handle both URL-encoded (%3A) and literal colon\
+        \ forms\n    timestamps=$(echo \"$raw_html\" | grep -oE '[0-9]{8}_[0-9]{2}(%3A|:)[0-9]{2}' | sed -E 's/([0-9]{8}_[0-9]{2}):([0-9]{2})/\\\
+        1%3A\\2/g' | sort -r | head -10)\n    if [ -n \"$timestamps\" ]; then\n        for timestamp in $timestamps; do\n\
+        \            test_url=\"${base_url}${timestamp}/disk.qcow2\"\n            echo \"Testing timestamp from listing: $timestamp\"\
+        \ >&2\n            if curl --head --fail --connect-timeout 5 --max-time 10 \"$test_url\" >/dev/null 2>&1; then\n \
+        \               echo \"$timestamp\"\n                return 0\n            fi\n        done\n    fi\n    echo \"No\
+        \ timestamps found from listing, trying alternative method...\" >&2\n    current_date=$(date +%Y%m%d)\n    for days_back\
+        \ in {0..14}; do\n        test_date=$(date -d \"$current_date -$days_back days\" +%Y%m%d)\n        for hour in 13\
+        \ 12 11 10 09 08 07 06 05 14 15 16 17 18; do\n            for minute in 00 30; do\n                timestamp=\"${test_date}_${hour}%3A${minute}\"\
+        \n                test_url=\"${base_url}${timestamp}/disk.qcow2\"\n                echo \"Testing constructed timestamp:\
+        \ $timestamp\" >&2\n                if curl --head --fail --connect-timeout 5 --max-time 10 \"$test_url\" >/dev/null\
+        \ 2>&1; then\n                    echo \"$timestamp\"\n                    return 0\n                fi\n        \
+        \    done\n        done\n    done\n    return 1\n}\n\ndownload_alpine_image() {\n    local version=$1\n    local output_file=$2\n\
+        \    echo \"Getting latest timestamp for Alpine $version...\"\n    timestamp=$(get_latest_timestamp \"$version\" ||\
+        \ echo \"\")\n    if [ -z \"$timestamp\" ]; then\n        echo \"Failed to get valid timestamp for Alpine $version\"\
+        \n        return 1\n    fi\n    download_url=\"https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/${timestamp}/disk.qcow2\"\
+        \n    echo \"Found timestamp: $timestamp\"\n    echo \"Download URL: $download_url\"\n    echo \"Downloading with\
+        \ axel...\"\n    if axel -n 8 -o \"$output_file\" \"$download_url\" 2>/dev/null; then\n        if [ -f \"$output_file\"\
+        \ ] && [ $(stat -c %s \"$output_file\") -gt 10485760 ]; then\n            echo \"Successfully downloaded with axel:\
+        \ $(stat -c %s \"$output_file\") bytes\"\n            return 0\n        fi\n    fi\n    echo \"Axel failed, trying\
+        \ with curl...\"\n    if curl -L -o \"$output_file\" \"$download_url\" 2>/dev/null; then\n        if [ -f \"$output_file\"\
+        \ ] && [ $(stat -c %s \"$output_file\") -gt 10485760 ]; then\n            echo \"Successfully downloaded with curl:\
+        \ $(stat -c %s \"$output_file\") bytes\"\n            return 0\n        fi\n    fi\n    echo \"Both download methods\
+        \ failed\"\n    rm -f \"$output_file\"\n    return 1\n}\n\nfor version in \"3.22\" \"3.21\" \"3.20\"; do\n    echo\
+        \ \"=== Processing Alpine $version ===\"\n    rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2 alpine${version}.qcow2\n\
+        \    \n    echo \"Downloading Alpine $version Cloud Image\"\n    if ! download_alpine_image \"$version\" \"alpine-${version}.qcow2\"\
+        ; then\n        echo \"Failed to download Alpine $version, skipping...\"\n        continue\n    fi\n    \n    if [\
+        \ ! -f \"alpine-${version}.qcow2\" ] || [ $(stat -c %s \"alpine-${version}.qcow2\") -lt 10485760 ]; then\n       \
+        \ echo \"Download failed or file too small for Alpine $version, skipping...\"\n        rm -f alpine-${version}.qcow2\n\
+        \        continue\n    fi\n    \n    chmod 644 alpine-${version}.qcow2\n    \n    echo \"Customizing Alpine $version\
+        \ image\"\n    # 配置阿里云源\n    virt-customize -a alpine-${version}.qcow2 \\\n      --run-command \"sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g'\
+        \ /etc/apk/repositories || true\" \\\n      --run-command \"sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g'\
+        \ /etc/apk/repositories || true\" || true\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n    if ! virt-customize -a alpine-${version}.qcow2\
+        \ \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\"\
+        \ \\\n      --timezone Asia/Hong_Kong \\\n      --append-line \"/etc/conf.d/ntpd:NTPD_OPTS=\\\"-N -p time.apple.com\
+        \ -p time.windows.com\\\"\" \\\n      --run-command \"apk update && apk upgrade || true\" \\\n      --run-command\
+        \ \"apk add sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr\
+        \ htop bind-tools zstd cronie lsof openssh openrc || true\" \\\n      --run-command \"echo '#!/sbin/openrc-run' >\
+        \ /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"echo 'name=QEMU Guest Agent' >> /etc/init.d/qemu-guest-agent\"\
+        \ \\\n      --run-command \"echo 'command=/usr/bin/qemu-ga' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command\
+        \ \"printf 'command_args=\\\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\\\
+        \"\\n' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"echo 'pidfile=/run/qemu-guest-agent.pid' >> /etc/init.d/qemu-guest-agent\"\
+        \ \\\n      --run-command \"printf 'depend() { need localmount; after bootmisc; }\\n' >> /etc/init.d/qemu-guest-agent\"\
+        \ \\\n      --run-command \"chmod +x /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"rc-update add qemu-guest-agent\
+        \ boot || true\" \\\n      --run-command \"rc-update add sshd boot || true\" \\\n      --run-command \"apk cache clean\
+        \ || true\" \\\n      --delete \"/var/log/*.log\" \\\n      --delete \"/var/cache/apk/*\"; then\n        echo \"Failed\
+        \ to configure Alpine $version, skipping...\"\n        rm -f alpine-${version}.qcow2\n        continue\n    fi\n \
+        \   \n    echo \"Configuring SSH and root access for Alpine $version...\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a alpine-${version}.qcow2 --run-command \"rc-update add sshd boot || true\"\n    sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a alpine-${version}.qcow2 --run-command \"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin\
+        \ yes/g' /etc/ssh/sshd_config || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"sed -i 's/PasswordAuthentication\
+        \ no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a alpine-${version}.qcow2 --run-command \"sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config || true\"\n    sudo\
+        \ timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"sed -i 's/#AddressFamily\
+        \ any/AddressFamily any/g' /etc/ssh/sshd_config || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a\
+        \ alpine-${version}.qcow2 --run-command \"sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config\
+        \ || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"sed -i\
+        \ 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config || true\"\n    \n    echo \"Configuring qemu-guest-agent\
+        \ for Alpine $version...\"\n    \n    echo \"Setting root password and MOTD for Alpine $version...\"\n    sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"echo root:oneclickvirt | chpasswd\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"echo '' > /etc/motd\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"echo 'Modified from\
+        \ https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a alpine-${version}.qcow2 --run-command \"echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd\"\n\
+        \    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"echo '--by https://t.me/spiritlhl'\
+        \ >> /etc/motd\"\n    # 安全加固：禁用algif_aead模块（CVE防护）\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf\"\
+        \n    \n    echo \"Compressing Alpine $version image\"\n    if ! TMPDIR=\"$(pwd)\" timeout --kill-after=30s 45m virt-sparsify\
+        \ --compress --check-tmpdir=ignore alpine-${version}.qcow2 alpine-${version}-custom.qcow2; then\n        echo \"Failed\
+        \ to compress Alpine $version image, skipping...\"\n        rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2\n\
+        \        continue\n    fi\n    \n    mv alpine-${version}-custom.qcow2 alpine${version}.qcow2\n    ls -lh alpine${version}.qcow2\n\
+        \    \n    file=\"alpine${version}.qcow2\"\n    if [ -f \"$file\" ] && [ $(stat -c %s \"$file\") -gt 10485760 ] &&\
+        \ [ $(stat -c %s \"$file\") -le 2147483648 ]; then\n        echo \"Processing file: $file\"\n        \n        release_id=$(curl\
+        \ -fsS --retry 3 --connect-timeout 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"\
+        Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/${{ github.repository }}/releases/tags/alpine\"\
+        \ | jq -r '.id')\n        if [ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n            echo \"Release\
+        \ 'alpine' not found, please create it first\"\n            rm -f alpine-${version}.qcow2 alpine${version}.qcow2\n\
+        \            continue\n        fi\n        \n        echo \"Found release ID: $release_id\"\n        \n        echo\
+        \ \"Checking if $file already exists in release...\"\n        existing_asset_id=$(curl -fsS --retry 3 --connect-timeout\
+        \ 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"Accept: application/vnd.github.v3+json\"\
+        \ \"https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets\" | jq -r --arg name \"$(basename\
+        \ \"$file\")\" '.[] | select(.name == $name) | .id')\n        \n        if [ -n \"$existing_asset_id\" ] && [ \"$existing_asset_id\"\
+        \ != \"null\" ]; then\n            echo \"Asset $file already exists in release, deleting existing asset...\"\n  \
+        \          delete_response=$(curl -s -X DELETE -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" \"https://api.github.com/repos/${{\
+        \ github.repository }}/releases/assets/$existing_asset_id\")\n            echo \"$delete_response\"\n            if\
+        \ [ $? -eq 0 ] && ! echo \"$delete_response\" | grep -q \"error\"; then\n                echo \"Existing asset deleted\
+        \ successfully.\"\n            else\n                echo \"Failed to delete existing asset for $file. Skipping file\
+        \ upload...\"\n                rm -f alpine-${version}.qcow2 alpine${version}.qcow2\n                continue\n  \
+        \          fi\n        else\n            echo \"No existing $file file found in release.\"\n        fi\n        \n\
+        \        echo \"Uploading $file to release...\"\n        upload_response=$(curl -s -H \"Authorization: Bearer ${{\
+        \ secrets.GITHUB_TOKEN }}\" \\\n          -H \"Content-Type: application/octet-stream\" \\\n          -T \"$file\"\
+        \ \\\n          \"https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename\
+        \ \"$file\")\")\n        \n        echo \"Upload response: $upload_response\"\n        if echo \"$upload_response\"\
+        \ | jq -e '.browser_download_url' > /dev/null 2>&1; then\n            echo \"Successfully uploaded $file\"\n     \
+        \                 uploaded_images=$((uploaded_images + 1))\n            download_url=$(echo \"$upload_response\" |\
+        \ jq -r '.browser_download_url')\n            echo \"Download URL: $download_url\"\n        else\n            echo\
+        \ \"Failed to upload $file\"\n            echo \"Response: $upload_response\"\n        fi\n    else\n        echo\
+        \ \"File $file does not exist, is too small (< 10MB), or is too large (> 2GB)\"\n        if [ -f \"$file\" ]; then\n\
+        \            file_size=$(stat -c %s \"$file\")\n            echo \"File size: $file_size bytes\"\n        fi\n   \
+        \ fi\n    \n    echo \"Cleaning up files for Alpine $version\"\n    rm -f alpine-${version}.qcow2 alpine${version}.qcow2\n\
+        \    echo \"=== Completed processing Alpine $version ===\"\n    echo \"\"\ndone\necho \"All Alpine versions processed!\"\
+        \n\nif (( uploaded_images == 0 )); then echo \"No images were published\" >&2; exit 1; fi\n"
+    timeout-minutes: 180
+    env:
+      LIBGUESTFS_BACKEND: direct
+      LIBGUESTFS_BACKEND_SETTINGS: passt:no
+'on':
+  schedule:
+  - cron: 34 16 * * *
+  workflow_dispatch: null
+permissions:
+  contents: write
+concurrency:
+  group: cloud-image-${{ github.workflow }}
+  cancel-in-progress: false
