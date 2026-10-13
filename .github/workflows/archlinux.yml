@@ -52,30 +52,16 @@ jobs:
         echo "Checking image info..."
         virt-filesystems -a archlinux.qcow2 --long -h --uuid || true
         echo "Detecting root partition..."
-        root_part=$(virt-filesystems -a archlinux.qcow2 --filesystems --long 2>/dev/null | awk '/ext4|btrfs|xfs/{print $1}' | tail -1 || echo "")
-        if [ -z "$root_part" ]; then
-            root_part="/dev/sda3"
-            echo "Could not detect root partition automatically, using default: $root_part"
-        else
-            echo "Detected root partition: $root_part"
+        root_part=$(virt-filesystems -a archlinux.qcow2 --filesystems --long | awk '$1 ~ /^\/dev\/(sd[a-z]|vd[a-z])[0-9]+$/ && $3 ~ /^(ext4|btrfs|xfs)$/ {print $1}' | tail -1)
+        if [[ -z "$root_part" ]]; then
+            echo "No physical root filesystem partition was detected" >&2
+            exit 1
         fi
-        echo "Creating expanded image..."
+        echo "Detected physical root partition: $root_part"
         qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
-        echo "Resizing partitions into expanded image..."
-        if virt-resize --expand "$root_part" archlinux.qcow2 archlinux-expanded.qcow2; then
-            echo "virt-resize succeeded"
-        else
-            echo "virt-resize failed with $root_part, trying /dev/sda2 as fallback..."
-            rm -f archlinux-expanded.qcow2
-            qemu-img create -f qcow2 archlinux-expanded.qcow2 6G
-            if virt-resize --expand /dev/sda2 archlinux.qcow2 archlinux-expanded.qcow2; then
-                echo "virt-resize succeeded with /dev/sda2"
-            else
-                echo "virt-resize failed, falling back to direct copy+resize..."
-                rm -f archlinux-expanded.qcow2
-                cp archlinux.qcow2 archlinux-expanded.qcow2
-                qemu-img resize archlinux-expanded.qcow2 +3G
-            fi
+        if ! virt-resize --expand "$root_part" archlinux.qcow2 archlinux-expanded.qcow2; then
+            echo "Failed to resize the root partition; refusing to expand the EFI partition" >&2
+            exit 1
         fi
         echo "Customizing Arch Linux image - Phase 1: Basic Setup"
         if ! timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 \
@@ -105,15 +91,16 @@ jobs:
           --run-command "echo 'Server = https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist || true" \
           --run-command "echo 'nameserver 8.8.8.8' > /etc/resolv.conf; echo 'nameserver 1.1.1.1' >> /etc/resolv.conf || true" \
           --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
-          --run-command "pacman-key --init || true" \
-          --run-command "pacman-key --populate archlinux || true" \
-          --run-command "pacman -Sy --noconfirm archlinux-keyring || true" \
-          --run-command "pacman -Syu --noconfirm || true" \
-          --run-command "pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh || true" \
+          --run-command "SYSTEMD_OFFLINE=1 pacman-key --init" \
+          --run-command "SYSTEMD_OFFLINE=1 pacman-key --populate archlinux" \
+          --run-command "SYSTEMD_OFFLINE=1 pacman -Sy --noconfirm archlinux-keyring" \
+          --run-command "SYSTEMD_OFFLINE=1 pacman -Syu --noconfirm" \
+          --run-command "SYSTEMD_OFFLINE=1 pacman -S --noconfirm cloud-guest-utils qemu-guest-agent sudo bash-completion unzip wget curl axel net-tools iputils nano screen less vim bzip2 htop zstd cronie lsof openssh" \
           --run-command "(pacman -S --noconfirm spice-vdagent bind bind-tools || true)" \
           --run-command "systemctl enable qemu-guest-agent || true" \
           --run-command "systemctl enable sshd || true" \
-          --run-command "pacman -Scc --noconfirm || true"; then
+          --run-command "pacman -Scc --noconfirm || true" \
+          --run-command "gpgconf --homedir /etc/pacman.d/gnupg --kill all || true; sync"; then
             echo "Failed to configure Arch Linux, exiting..."
             rm -f archlinux.qcow2 archlinux-expanded.qcow2
             exit 1
@@ -130,7 +117,7 @@ jobs:
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#ListenAddress ::/ListenAddress ::/g' /etc/ssh/sshd_config || true"
         echo "Configuring qemu-guest-agent for Arch Linux..."
         echo "Setting root password and MOTD for Arch Linux..."
-        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo root:oneclickvirt | chpasswd root"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo root:oneclickvirt | chpasswd"
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo '' > /etc/motd"
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd"
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "echo 'Related repo https://github.com/spiritLHLS/pve' >> /etc/motd"
