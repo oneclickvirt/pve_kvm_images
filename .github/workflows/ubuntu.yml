@@ -15,8 +15,11 @@ jobs:
       run: |
         set -euo pipefail
         sudo apt-get update -y
-        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools
+        sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic
         if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+        # --no-install-recommends omits the kernel needed by supermin.
+        sudo find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -exec chmod a+r {} +
+        LIBGUESTFS_BACKEND=direct timeout --kill-after=30s 180s libguestfs-test-tool
     - name: Build Ubuntu Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
         passt:no\"\n# 定义版本信息 (从新到旧)\ndeclare -A ubuntu_versions\nubuntu_versions[\"24.04\"]=\"noble\"\nubuntu_versions[\"\
@@ -127,6 +130,7 @@ jobs:
     env:
       LIBGUESTFS_BACKEND: direct
       LIBGUESTFS_BACKEND_SETTINGS: passt:no
+      LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:
   - cron: 34 13 * * *
