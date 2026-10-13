@@ -3,7 +3,7 @@ jobs:
   build_centos_cloud_images:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: check path
       run: |
         pwd
@@ -22,7 +22,7 @@ jobs:
         LIBGUESTFS_BACKEND=direct timeout --kill-after=30s 180s libguestfs-test-tool
     - name: Build CentOS Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
-        passt:no\"\ndeclare -A centos_versions\ncentos_versions[\"9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"\
+        passt=no\"\ndeclare -A centos_versions\ncentos_versions[\"9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"\
         7\"]=\"7\"\nfor version in \"9\" \"8\"; do\n    echo \"=== Processing CentOS $version ===\"\n    rm -f centos-${version}.qcow2\
         \ centos-${version}-custom.qcow2 centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"Downloading\
         \ CentOS $version Cloud Image\"\n    if [ \"$version\" = \"9\" ]; then\n        download_url=\"https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2\"\
@@ -150,7 +150,7 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt:no
+      LIBGUESTFS_BACKEND_SETTINGS: passt=no
       LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:

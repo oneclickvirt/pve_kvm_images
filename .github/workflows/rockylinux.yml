@@ -3,7 +3,7 @@ jobs:
   build_rockylinux_cloud_images:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: check path
       run: |
         pwd
@@ -25,7 +25,7 @@ jobs:
         set -euo pipefail
         uploaded_images=0
         export LIBGUESTFS_BACKEND=direct
-        export LIBGUESTFS_BACKEND_SETTINGS="passt:no"
+        export LIBGUESTFS_BACKEND_SETTINGS="passt=no"
         declare -A rockylinux_versions
         rockylinux_versions["9"]="9"
         rockylinux_versions["8"]="8"
@@ -182,7 +182,7 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt:no
+      LIBGUESTFS_BACKEND_SETTINGS: passt=no
       LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:

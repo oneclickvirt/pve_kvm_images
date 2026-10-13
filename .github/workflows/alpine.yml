@@ -3,7 +3,7 @@ jobs:
   build_alpine_cloud_images:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: check path
       run: |
         pwd
@@ -22,7 +22,7 @@ jobs:
         LIBGUESTFS_BACKEND=direct timeout --kill-after=30s 180s libguestfs-test-tool
     - name: Build Alpine Images
       run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\nexport LIBGUESTFS_BACKEND_SETTINGS=\"\
-        passt:no\"\ndeclare -A alpine_versions\nalpine_versions[\"3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"\
+        passt=no\"\ndeclare -A alpine_versions\nalpine_versions[\"3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"\
         3.21\"\nalpine_versions[\"3.20\"]=\"3.20\"\nget_latest_timestamp() {\n    local version=$1\n    local base_url=\"\
         https://images.linuxcontainers.org/images/alpine/${version}/amd64/cloud/\"\n    echo \"Fetching directory\
         \ listing for Alpine $version...\" >&2\n    local raw_html\n    raw_html=$(curl -s --connect-timeout 15\
@@ -144,7 +144,7 @@ jobs:
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
-      LIBGUESTFS_BACKEND_SETTINGS: passt:no
+      LIBGUESTFS_BACKEND_SETTINGS: passt=no
       LIBGUESTFS_MEMSIZE: '2048'
 'on':
   schedule:
