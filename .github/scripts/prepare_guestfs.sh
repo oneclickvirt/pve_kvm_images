@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 sudo apt-get update -y
-sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic
+sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic isc-dhcp-client dhcpcd-base
 if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
 sudo find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -exec chmod a+r {} +
 
@@ -22,6 +22,9 @@ trap 'rm -f "$probe_image" "$probe_script"' EXIT
 qemu-img create -f qcow2 "$probe_image" 64M
 cat > "$probe_script" <<'PROBE'
 set -euo pipefail
+ip -brief address
+ip route
+cat /etc/resolv.conf
 exec 3<>/dev/tcp/archive.ubuntu.com/80
 printf 'HEAD /ubuntu/ HTTP/1.0\r\nHost: archive.ubuntu.com\r\n\r\n' >&3
 IFS= read -r status <&3
