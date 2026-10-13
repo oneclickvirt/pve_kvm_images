@@ -3,6 +3,12 @@ jobs:
   build_archlinux_cloud_images:
     runs-on: ubuntu-24.04
     steps:
+    - name: Load trusted network recovery helpers
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/ci_network.sh" -o "$RUNNER_TEMP/ci-network.sh"
+        curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/release_assets.py" -o "$RUNNER_TEMP/ci-release-assets.py"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: check path
       run: |
@@ -16,6 +22,7 @@ jobs:
         bash .github/scripts/prepare_guestfs.sh
     - name: Build Arch Linux Images
       run: |
+        source "$RUNNER_TEMP/ci-network.sh"
         set -euo pipefail
         uploaded_images=0
         export LIBGUESTFS_BACKEND=direct
@@ -132,36 +139,8 @@ jobs:
             fi
             echo "Found release ID: $release_id"
             echo "Checking if $file already exists in release..."
-            existing_asset_id=$(curl -fsS --retry 3 --connect-timeout 10 --max-time 120 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets" | jq -r --arg name "$(basename "$file")" '.[] | select(.name == $name) | .id')
-            if [ -n "$existing_asset_id" ] && [ "$existing_asset_id" != "null" ]; then
-                echo "Asset $file already exists in release, deleting existing asset..."
-                delete_response=$(curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/assets/$existing_asset_id")
-                echo "$delete_response"
-                if [ $? -eq 0 ] && ! echo "$delete_response" | grep -q "error"; then
-                    echo "Existing asset deleted successfully."
-                else
-                    echo "Failed to delete existing asset for $file. Skipping file upload..."
-                    rm -f archlinux.qcow2 archlinux-expanded.qcow2 archlinux-latest.qcow2
-                    exit 1
-                fi
-            else
-                echo "No existing $file file found in release."
-            fi
-            echo "Uploading $file to release..."
-            upload_response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Content-Type: application/octet-stream" \
-              -T "$file" \
-              "https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename "$file")")
-            echo "Upload response: $upload_response"
-            if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
-                echo "Successfully uploaded $file"
-                              uploaded_images=$((uploaded_images + 1))
-                download_url=$(echo "$upload_response" | jq -r '.browser_download_url')
-                echo "Download URL: $download_url"
-            else
-                echo "Failed to upload $file"
-                echo "Response: $upload_response"
-            fi
+            python3 "$RUNNER_TEMP/ci-release-assets.py" archlinux "$file"
+            uploaded_images=$((uploaded_images + 1))
         else
             echo "File $file does not exist, is too small (< 10MB), or is too large (> 2GB)"
             if [ -f "$file" ]; then
@@ -174,6 +153,9 @@ jobs:
         echo "=== Completed processing Arch Linux ==="
 
         if (( uploaded_images == 0 )); then echo "No images were published" >&2; exit 1; fi
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct

@@ -3,6 +3,12 @@ jobs:
   build_centos_cloud_images:
     runs-on: ubuntu-24.04
     steps:
+    - name: Load trusted network recovery helpers
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/ci_network.sh" -o "$RUNNER_TEMP/ci-network.sh"
+        curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/release_assets.py" -o "$RUNNER_TEMP/ci-release-assets.py"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: check path
       run: |
@@ -15,12 +21,12 @@ jobs:
       run: |
         bash .github/scripts/prepare_guestfs.sh
     - name: Build CentOS Images
-      run: "set -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\ndeclare -A centos_versions\n\
-        centos_versions[\"9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"7\"]=\"7\"\nimage_versions=(9\
-        \ 8)\nexpected_images=${#image_versions[@]}\nfor version in \"${image_versions[@]}\"; do\n    echo \"===\
-        \ Processing CentOS $version ===\"\n    rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2 centos${version}.qcow2\
-        \ centos-${version}.qcow2.bak\n    echo \"Downloading CentOS $version Cloud Image\"\n    if [ \"$version\"\
-        \ = \"9\" ]; then\n        download_url=\"https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2\"\
+      run: "source \"$RUNNER_TEMP/ci-network.sh\"\nset -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\n\
+        declare -A centos_versions\ncentos_versions[\"9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"\
+        7\"]=\"7\"\nimage_versions=(9 8)\nexpected_images=${#image_versions[@]}\nfor version in \"${image_versions[@]}\"\
+        ; do\n    echo \"=== Processing CentOS $version ===\"\n    rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2\
+        \ centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"Downloading CentOS $version Cloud Image\"\
+        \n    if [ \"$version\" = \"9\" ]; then\n        download_url=\"https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2\"\
         \n    elif [ \"$version\" = \"8\" ]; then\n        download_url=\"https://cloud.centos.org/centos/8-stream/x86_64/images/CentOS-Stream-GenericCloud-8-latest.x86_64.qcow2\"\
         \n    # elif [ \"$version\" = \"7\" ]; then\n    #     download_url=\"https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2\"\
         \n    fi\n    if ! axel -n 8 -o centos-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo\
@@ -116,33 +122,17 @@ jobs:
         \  if [ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n            echo \"Release 'centos'\
         \ not found, please create it first\"\n            rm -f centos-${version}.qcow2 centos${version}.qcow2\
         \ centos-${version}.qcow2.bak\n            continue\n        fi\n        echo \"Found release ID: $release_id\"\
-        \n        echo \"Checking if $file already exists in release...\"\n        existing_asset_id=$(curl -fsS\
-        \ --retry 3 --connect-timeout 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\"\
-        \ -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/${{ github.repository }}/releases/$release_id/assets\"\
-        \ | jq -r --arg name \"$(basename \"$file\")\" '.[] | select(.name == $name) | .id')\n        if [ -n \"\
-        $existing_asset_id\" ] && [ \"$existing_asset_id\" != \"null\" ]; then\n            echo \"Asset $file already\
-        \ exists in release, deleting existing asset...\"\n            delete_response=$(curl -s -X DELETE -H \"\
-        Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" \"https://api.github.com/repos/${{ github.repository\
-        \ }}/releases/assets/$existing_asset_id\")\n            echo \"$delete_response\"\n            if [ $? -eq\
-        \ 0 ] && ! echo \"$delete_response\" | grep -q \"error\"; then\n                echo \"Existing asset deleted\
-        \ successfully.\"\n            else\n                echo \"Failed to delete existing asset for $file. Skipping\
-        \ file upload...\"\n                rm -f centos-${version}.qcow2 centos${version}.qcow2 centos-${version}.qcow2.bak\n\
-        \                continue\n            fi\n        else\n            echo \"No existing $file file found\
-        \ in release.\"\n        fi\n        echo \"Uploading $file to release...\"\n        upload_response=$(curl\
-        \ -s -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" \\\n          -H \"Content-Type: application/octet-stream\"\
-        \ \\\n          -T \"$file\" \\\n          \"https://uploads.github.com/repos/${{ github.repository }}/releases/$release_id/assets?name=$(basename\
-        \ \"$file\")\")\n        echo \"Upload response: $upload_response\"\n        if echo \"$upload_response\"\
-        \ | jq -e '.browser_download_url' > /dev/null 2>&1; then\n            echo \"Successfully uploaded $file\"\
-        \n                      uploaded_images=$((uploaded_images + 1))\n            download_url=$(echo \"$upload_response\"\
-        \ | jq -r '.browser_download_url')\n            echo \"Download URL: $download_url\"\n        else\n   \
-        \         echo \"Failed to upload $file\"\n            echo \"Response: $upload_response\"\n        fi\n\
-        \    else\n        echo \"File $file does not exist, is too small (< 10MB), or is too large (> 2GB)\"\n\
-        \        if [ -f \"$file\" ]; then\n            file_size=$(stat -c %s \"$file\")\n            echo \"File\
-        \ size: $file_size bytes\"\n        fi\n    fi\n    echo \"Cleaning up files for CentOS $version\"\n   \
-        \ rm -f centos-${version}.qcow2 centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"=== Completed\
-        \ processing CentOS $version ===\"\n    echo \"\"\ndone\necho \"All CentOS versions processed!\"\nif ((\
-        \ uploaded_images != expected_images )); then echo \"Published $uploaded_images of $expected_images configured\
-        \ images\" >&2; exit 1; fi\n"
+        \n        echo \"Checking if $file already exists in release...\"\n        python3 \"$RUNNER_TEMP/ci-release-assets.py\"\
+        \ centos \"$file\"\n        uploaded_images=$((uploaded_images + 1))\n    else\n        echo \"File $file\
+        \ does not exist, is too small (< 10MB), or is too large (> 2GB)\"\n        if [ -f \"$file\" ]; then\n\
+        \            file_size=$(stat -c %s \"$file\")\n            echo \"File size: $file_size bytes\"\n     \
+        \   fi\n    fi\n    echo \"Cleaning up files for CentOS $version\"\n    rm -f centos-${version}.qcow2 centos${version}.qcow2\
+        \ centos-${version}.qcow2.bak\n    echo \"=== Completed processing CentOS $version ===\"\n    echo \"\"\n\
+        done\necho \"All CentOS versions processed!\"\nif (( uploaded_images != expected_images )); then echo \"\
+        Published $uploaded_images of $expected_images configured images\" >&2; exit 1; fi\n"
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
     timeout-minutes: 180
     env:
       LIBGUESTFS_BACKEND: direct
