@@ -27,17 +27,23 @@ jobs:
         \n        rm -f alpine-${version}.qcow2\n        continue\n    fi\n    \n    chmod 644 alpine-${version}.qcow2\n\
         \    \n    # Official generic images have a small root partition. Reserve enough\n    # space for a kernel\
         \ upgrade and the required guest utilities.\n    root_part=$(virt-filesystems -a \"alpine-${version}.qcow2\"\
-        \ --filesystems --long | awk '$1 ~ /^\\/dev\\/(sd[a-z]|vd[a-z])[0-9]+$/ && $3 ~ /^(ext4|btrfs|xfs)$/ {print\
+        \ --filesystems --long | awk '$1 ~ /^\\/dev\\/(sd[a-z]|vd[a-z])[0-9]*$/ && $3 ~ /^(ext4|btrfs|xfs)$/ {print\
         \ $1}' | tail -1)\n    if [[ -z \"$root_part\" ]]; then\n        echo \"No physical Alpine root filesystem\
         \ partition was detected\" >&2\n        exit 1\n    fi\n    original_size=$(qemu-img info --output=json\
         \ \"alpine-${version}.qcow2\" | jq -er '.\"virtual-size\"')\n    [[ \"$original_size\" =~ ^[0-9]+$ ]]\n\
         \    expanded_size=$((original_size + 1073741824))\n    if (( expanded_size < 4294967296 )); then expanded_size=4294967296;\
-        \ fi\n    echo \"Expanding Alpine root partition $root_part to $expanded_size bytes\"\n    rm -f \"alpine-${version}-expanded.qcow2\"\
-        \n    qemu-img create -f qcow2 \"alpine-${version}-expanded.qcow2\" \"$expanded_size\"\n    virt-resize\
-        \ --expand \"$root_part\" \"alpine-${version}.qcow2\" \"alpine-${version}-expanded.qcow2\"\n    mv \"alpine-${version}-expanded.qcow2\"\
-        \ \"alpine-${version}.qcow2\"\n\n    echo \"Customizing Alpine $version image\"\n    # 配置阿里云源\n    timeout\
-        \ --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 \\\n      --run-command \"sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g'\
-        \ /etc/apk/repositories || true\" \\\n      --run-command \"sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g'\
+        \ fi\n    echo \"Expanding Alpine root partition $root_part to $expanded_size bytes\"\n    if [[ \"$root_part\"\
+        \ =~ ^/dev/(sd[a-z]|vd[a-z])$ ]]; then\n        # The verified official 3.20 image is an ext4 filesystem\
+        \ on the\n        # whole 200MB disk, without a partition table. Preserve that layout.\n        root_type=$(virt-filesystems\
+        \ -a \"alpine-${version}.qcow2\" --filesystems --long | awk -v root=\"$root_part\" '$1 == root {print $3}')\n\
+        \        [[ \"$root_type\" == ext4 ]]\n        qemu-img resize -f qcow2 \"alpine-${version}.qcow2\" \"$expanded_size\"\
+        \n        guestfish -a \"alpine-${version}.qcow2\" run : resize2fs \"$root_part\"\n    else\n        rm\
+        \ -f \"alpine-${version}-expanded.qcow2\"\n        qemu-img create -f qcow2 \"alpine-${version}-expanded.qcow2\"\
+        \ \"$expanded_size\"\n        virt-resize --expand \"$root_part\" \"alpine-${version}.qcow2\" \"alpine-${version}-expanded.qcow2\"\
+        \n        mv \"alpine-${version}-expanded.qcow2\" \"alpine-${version}.qcow2\"\n    fi\n\n    echo \"Customizing\
+        \ Alpine $version image\"\n    # 配置阿里云源\n    timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ \\\n      --run-command \"sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories\
+        \ || true\" \\\n      --run-command \"sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g'\
         \ /etc/apk/repositories || true\" || true\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n    if ! timeout --kill-after=30s\
         \ 45m virt-customize -a alpine-${version}.qcow2 \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
         \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong \\\n      --append-line\
