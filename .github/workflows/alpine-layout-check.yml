@@ -1,0 +1,31 @@
+name: Inspect official Alpine cloud layout
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LIBGUESTFS_BACKEND: direct
+      LIBGUESTFS_MEMSIZE: '2048'
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Prepare inspection tools
+      run: bash .github/scripts/prepare_guestfs.sh
+    - name: Inspect verified official image
+      run: |
+        set -euo pipefail
+        python3 .github/scripts/download_alpine_image.py 3.20 alpine-layout.qcow2
+        qemu-img info alpine-layout.qcow2
+        virt-filesystems -a alpine-layout.qcow2 --all --long
+        guestfish --ro -a alpine-layout.qcow2 <<'GUESTFS'
+        run
+        inspect-os
+        list-filesystems
+        lvs
+        pvs
+        GUESTFS
