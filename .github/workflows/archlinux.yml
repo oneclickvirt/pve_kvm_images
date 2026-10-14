@@ -9,7 +9,9 @@ jobs:
         set -euo pipefail
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/ci_network.sh" -o "$RUNNER_TEMP/ci-network.sh"
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/release_assets.py" -o "$RUNNER_TEMP/ci-release-assets.py"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Prepare hosted VM runtime validation
+      run: bash .github/scripts/prepare_hosted_runtime.sh qemu
     - name: check path
       run: |
         pwd
@@ -103,7 +105,7 @@ jobs:
         fi
         echo "Configuring SSH and root access for Arch Linux..."
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg || true"
-        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "systemctl enable sshd || true"
+        sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "systemctl enable sshd"
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config || true"
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/#PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
         sudo timeout --kill-after=30s 45m virt-customize -a archlinux-expanded.qcow2 --run-command "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true"
@@ -139,6 +141,7 @@ jobs:
             fi
             echo "Found release ID: $release_id"
             echo "Checking if $file already exists in release..."
+            python3 .github/scripts/hosted_image_test.py --file "$file" --runtime qemu
             python3 "$RUNNER_TEMP/ci-release-assets.py" archlinux "$file"
             uploaded_images=$((uploaded_images + 1))
         else
@@ -156,7 +159,7 @@ jobs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       LIBGUESTFS_BACKEND: direct
       LIBGUESTFS_MEMSIZE: '2048'
@@ -169,3 +172,5 @@ permissions:
 concurrency:
   group: cloud-image-${{ github.workflow }}
   cancel-in-progress: false
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'

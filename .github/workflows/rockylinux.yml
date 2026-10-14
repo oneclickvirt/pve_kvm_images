@@ -9,7 +9,9 @@ jobs:
         set -euo pipefail
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/ci_network.sh" -o "$RUNNER_TEMP/ci-network.sh"
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/release_assets.py" -o "$RUNNER_TEMP/ci-release-assets.py"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Prepare hosted VM runtime validation
+      run: bash .github/scripts/prepare_hosted_runtime.sh qemu
     - name: check path
       run: |
         pwd
@@ -64,9 +66,10 @@ jobs:
               --run-command "systemctl enable serial-getty@ttyS1.service || true" \
               --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
               --run-command "(dnf install -y epel-release --allowerasing || dnf install -y epel-release || true)" \
-              --run-command "dnf install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || true" \
+              --run-command "dnf install -y curl openssh-server qemu-guest-agent" \
+              --run-command "dnf install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || echo Optional guest utilities were unavailable >&2" \
               --run-command "(dnf install -y spice-vdagent lldpad || true)" \
-              --run-command "systemctl enable qemu-guest-agent || true" \
+              --run-command "systemctl enable qemu-guest-agent" \
               --run-command "dnf -y autoremove && dnf -y clean all || true" \
               --delete "/var/log/*.log" \
               --truncate "/etc/machine-id"; then
@@ -82,13 +85,13 @@ jobs:
             echo "Configuring SSH and root access for RockyLinux $version..."
             if [[ "$version" == "9" ]]; then
                 echo "Applying RockyLinux 9 specific SSH configuration..."
-                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd || true"
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd"
                 sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \; 2>/dev/null || true"
                 sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \; 2>/dev/null || true"
                 sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' {} \; 2>/dev/null || true"
             else
                 echo "Applying RockyLinux 8 specific SSH configuration..."
-                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd || true"
+                sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "systemctl enable sshd"
             fi
             sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config"
             sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --run-command "sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config"
@@ -137,6 +140,7 @@ jobs:
                 fi
                 echo "Found release ID: $release_id"
                 echo "Checking if $file already exists in release..."
+                python3 .github/scripts/hosted_image_test.py --file "$file" --runtime qemu
                 python3 "$RUNNER_TEMP/ci-release-assets.py" rockylinux "$file"
                 uploaded_images=$((uploaded_images + 1))
             else
@@ -156,7 +160,7 @@ jobs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       LIBGUESTFS_BACKEND: direct
       LIBGUESTFS_MEMSIZE: '2048'
@@ -169,3 +173,5 @@ permissions:
 concurrency:
   group: cloud-image-${{ github.workflow }}
   cancel-in-progress: false
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'

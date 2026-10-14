@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -131,66 +132,117 @@ def firmware(arch, folder):
     raise RuntimeError('hosted UEFI firmware is unavailable')
 
 
-def qemu_test(folder, disk, console_only=False):
+def ssh_command(port, key, script, password=None):
+    command=['ssh','-p',str(port),'-i',str(key),'-o','IdentitiesOnly=yes',
+             '-o','StrictHostKeyChecking=no','-o','UserKnownHostsFile=/dev/null',
+             '-o','ConnectTimeout=5','-o','ConnectionAttempts=1','-o','LogLevel=ERROR']
+    environment=dict(os.environ)
+    if password:
+        # These are the documented public legacy image credentials. Never put
+        # a password in a command line or include it in diagnostic output.
+        environment['SSHPASS']=password
+        command=['sshpass','-e']+command+['-o','PreferredAuthentications=password']
+    else:command+=['-o','BatchMode=yes']
+    result=run(command+['root@127.0.0.1',script],capture_output=True,text=True,env=environment,timeout=50)
+    return result.stdout.strip()
+
+
+def qemu_test(folder, disk, provision_key=False):
     arch='arm64' if os.uname().machine=='aarch64' else 'amd64'
     accelerated=kvm_available()
     overlay=folder/'validation-overlay.qcow2'
     run(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(disk.resolve()),str(overlay)])
     info=json.loads(run(['qemu-img','info','--output=json',str(disk)],capture_output=True,text=True).stdout)
     run(['qemu-img','resize',str(overlay),str(max(info['virtual-size'],10*1024**3))])
-    seed=folder/'seed.img';user=folder/'user-data';meta=folder/'meta-data'
-    user.write_text('#cloud-config\nssh_pwauth: true\ndisable_root: false\n')
+    key=folder/'test-key'
+    run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(key)],capture_output=True)
+    public=key.with_suffix('.pub').read_text().strip()
+    seed=folder/'seed.img';user=folder/'user-data';meta=folder/'meta-data';network=folder/'network-config'
+    user.write_text('#cloud-config\nssh_pwauth: false\ndisable_root: false\nusers:\n  - default\n  - name: root\n    lock_passwd: false\n    ssh_authorized_keys:\n      - '+public+'\n')
     meta.write_text('instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n')
-    run(['cloud-localds',str(seed),str(user),str(meta)])
+    network.write_text('version: 2\nethernets:\n  hosted:\n    match:\n      name: "e*"\n    dhcp4: true\n')
+    run(['cloud-localds','--network-config='+str(network),str(seed),str(user),str(meta)])
+    if provision_key:
+        # Supply the consumer's login key on the disposable overlay. Do not
+        # install packages, enable missing SSH/network services or change QGA
+        # policy: the original image still has to provide those capabilities.
+        try:
+            run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
+                 '--root-password','password:'+secrets.token_urlsafe(32),'--no-network'],capture_output=True,timeout=600,
+                env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
+        except subprocess.CalledProcessError:
+            raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
     serial=folder/'serial.log';sock=folder/'guest-agent.sock';monitor=folder/'monitor.sock'
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1',0));port=listener.getsockname()[1]
     command=['qemu-system-aarch64' if arch=='arm64' else 'qemu-system-x86_64',
              '-machine','virt' if arch=='arm64' else 'q35','-accel','kvm' if accelerated else 'tcg,thread=multi',
              '-cpu','host' if accelerated else 'max','-m','2048','-smp','2',
              '-display','none','-serial',f'file:{serial}','-monitor',f'unix:{monitor},server=on,wait=off',
              '-drive',f'file={overlay},format=qcow2,if=virtio','-drive',f'file={seed},format=raw,if=virtio',
-             '-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0',
+             '-netdev',f'user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22','-device','virtio-net-pci,netdev=net0',
              '-device','virtio-serial-pci','-chardev',f'socket,path={sock},server=on,wait=off,id=qga',
-             '-device','virtserialport,chardev=qga,name=org.qemu.guest_agent.0']+firmware(arch,folder)
-    log=(folder/'qemu.log').open('wb');process=subprocess.Popen(command,stdout=log,stderr=log)
-    def ready(previous=None, serial_offset=0):
+             '-device','virtserialport,chardev=qga,name=org.qemu.guest_agent.0']
+    log=(folder/'qemu.log').open('wb');process=None;mode='UEFI';transport='QGA';ssh_password=None
+    repository=os.environ.get('GITHUB_REPOSITORY','')
+    legacy_password='oneclickvirt' if repository.endswith('/pve_kvm_images') else 'password' if repository.endswith('/kvm_images') else None
+    def stop():
+        if process is not None:
+            process.terminate()
+            try:process.wait(timeout=30)
+            except subprocess.TimeoutExpired:process.kill();process.wait()
+    def start(bios=False):
+        nonlocal process,mode
+        for path in [serial,sock,monitor]:path.unlink(missing_ok=True)
+        mode='BIOS' if bios else 'UEFI'
+        process=subprocess.Popen(command+([] if bios else firmware(arch,folder)),stdout=log,stderr=log)
+    def ready(previous=None, allow_bios=False):
+        nonlocal transport,ssh_password
         deadline=time.monotonic()+(1500 if not accelerated else 600)
-        last_error='guest agent unavailable'
+        last_error='guest execution unavailable';agent_disabled=False
+        began=time.monotonic()
         while time.monotonic()<deadline:
             if process.poll() is not None: raise RuntimeError('QEMU terminated before guest readiness')
-            if console_only:
-                if serial.exists():
-                    with serial.open('rb') as output:
-                        output.seek(serial_offset);text=output.read().decode(errors='replace')
-                else: text=''
-                if re.search(r'(?m)(login:|Please press Enter to activate this console|Welcome to .+Linux)',text):return 'console'
-            else:
+            if not agent_disabled:
                 try:
                     boot=qga_check(sock)
-                    if boot and boot!=previous:return boot
-                except (OSError,RuntimeError,TimeoutError,ValueError) as error:last_error=str(error)[-1500:]
+                    if boot and boot!=previous:transport='QGA';return boot
+                except (OSError,RuntimeError,TimeoutError,ValueError) as error:
+                    last_error=str(error)[-1500:]
+                    agent_disabled='guest-exec' in last_error and ('disabled' in last_error or 'not found' in last_error)
+            for password in [None]+([legacy_password] if legacy_password else []):
+                try:
+                    boot=ssh_command(port,key,CHECK,password)
+                    if boot and boot!=previous:transport='SSH';ssh_password=password;return boot
+                except subprocess.CalledProcessError as error:last_error=(error.stderr or str(error))[-1500:]
+                except (subprocess.SubprocessError,OSError) as error:last_error=type(error).__name__
+            # A confirmed firmware shell has no guest kernel. Retry once with
+            # SeaBIOS on AMD64; keep the same guest assertions and overlay.
+            if allow_bios and arch=='amd64' and time.monotonic()-began>45 and serial.exists():
+                if 'UEFI Interactive Shell' in serial.read_text(errors='replace'):
+                    print('UEFI has no boot entry; retrying the legacy image with SeaBIOS')
+                    return None
             time.sleep(5)
         if serial.exists():print(serial.read_text(errors='replace')[-12000:])
         print((folder/'qemu.log').read_text(errors='replace')[-3000:])
         print('Last guest readiness error: '+last_error)
         raise RuntimeError('software or hardware VM readiness budget exhausted')
     try:
-        boot=ready()
-        if console_only:
-            offset=serial.stat().st_size
-            with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as stream:
-                stream.settimeout(10);stream.connect(str(monitor));stream.recv(4096)
-                stream.sendall(b'system_reset\n');stream.recv(4096)
-            ready(serial_offset=offset)
-            # Guest-agent-less ARM images can still prove kernel/rootfs boot on TCG.
-            # This is explicitly recorded as console coverage, not SSH validation.
-            print('Runtime validation: QEMU '+('KVM' if accelerated else 'TCG')+' kernel/rootfs console boot and reset passed; guest execution was not validated')
+        start();boot=ready(allow_bios=True)
+        if boot is None:
+            stop();start(bios=True);boot=ready()
+        if transport=='SSH':
+            # reboot commonly disconnects SSH before returning a status.
+            # The changed kernel boot_id is the success condition.
+            try:ssh_command(port,key,'reboot',ssh_password)
+            except subprocess.CalledProcessError as error:
+                if error.returncode!=255:raise
         else:
-            qga_command(sock,'guest-shutdown',{'mode':'reboot'},expect_response=False);time.sleep(15);ready(boot)
-            print('Runtime validation: QEMU '+('KVM' if accelerated else 'TCG')+' guest agent, SSH listener, network and reboot passed')
+            qga_command(sock,'guest-shutdown',{'mode':'reboot'},expect_response=False)
+        time.sleep(15);ready(boot)
+        print('Runtime validation: QEMU '+('KVM' if accelerated else 'TCG')+' '+mode+' '+transport+' guest execution, SSH listener, network and reboot passed')
     finally:
-        process.terminate()
-        try:process.wait(timeout=30)
-        except subprocess.TimeoutExpired:process.kill();process.wait()
+        stop()
         log.close()
 
 
@@ -253,7 +305,7 @@ def main():
         folder=Path(temporary);metadata,rootfs=unpack(args.file,folder,args.runtime)
         vm=rootfs.name.endswith('.qcow2')
         if args.runtime=='qemu' or (vm and not kvm_available()):
-            qemu_test(folder,rootfs,console_only=metadata is not None)
+            qemu_test(folder,rootfs,provision_key=metadata is not None)
         else:
             native_test(folder,metadata,rootfs,vm=vm,cli='/snap/bin/lxc' if args.runtime=='lxd' else 'incus')
     print('IMAGE_TEST_RESULT success=true image='+args.file.name)

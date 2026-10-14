@@ -54,7 +54,10 @@ def main():
     args=parser.parse_args();repo=os.environ['GITHUB_REPOSITORY']
     publisher=Publisher(repo,os.environ['GH_TOKEN'])
     if args.command=='matrix':
-        value=matrix(published(publisher),repo.split('/')[-1],args.scope,args.kind)
+        assets=published(publisher)
+        if os.environ.get('IMAGE'):
+            assets=[a for a in assets if a['name']==os.environ['IMAGE']]
+        value=matrix(assets,repo.split('/')[-1],'full' if os.environ.get('IMAGE') else args.scope,args.kind)
         encoded=json.dumps(value,separators=(',',':'))
         with open(os.environ['GITHUB_OUTPUT'],'a') as stream:print('matrix='+encoded,file=stream)
         print('Published image test jobs:',len(value['include']))

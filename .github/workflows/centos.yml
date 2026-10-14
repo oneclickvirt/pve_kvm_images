@@ -9,7 +9,9 @@ jobs:
         set -euo pipefail
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/ci_network.sh" -o "$RUNNER_TEMP/ci-network.sh"
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/release_assets.py" -o "$RUNNER_TEMP/ci-release-assets.py"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Prepare hosted VM runtime validation
+      run: bash .github/scripts/prepare_hosted_runtime.sh qemu
     - name: check path
       run: |
         pwd
@@ -21,119 +23,165 @@ jobs:
       run: |
         bash .github/scripts/prepare_guestfs.sh
     - name: Build CentOS Images
-      run: "source \"$RUNNER_TEMP/ci-network.sh\"\nset -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\n\
-        declare -A centos_versions\ncentos_versions[\"9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"\
-        7\"]=\"7\"\nimage_versions=(9 8)\nexpected_images=${#image_versions[@]}\nfor version in \"${image_versions[@]}\"\
-        ; do\n    echo \"=== Processing CentOS $version ===\"\n    rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2\
-        \ centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"Downloading CentOS $version Cloud Image\"\
-        \n    if [ \"$version\" = \"9\" ]; then\n        download_url=\"https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2\"\
+      run: "source \"$RUNNER_TEMP/ci-network.sh\"\nset -euo pipefail\nuploaded_images=0\n\
+        export LIBGUESTFS_BACKEND=direct\ndeclare -A centos_versions\ncentos_versions[\"\
+        9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"7\"]=\"7\"\n\
+        image_versions=(9 8)\nexpected_images=${#image_versions[@]}\nfor version in\
+        \ \"${image_versions[@]}\"; do\n    echo \"=== Processing CentOS $version\
+        \ ===\"\n    rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2\
+        \ centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"Downloading\
+        \ CentOS $version Cloud Image\"\n    if [ \"$version\" = \"9\" ]; then\n \
+        \       download_url=\"https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2\"\
         \n    elif [ \"$version\" = \"8\" ]; then\n        download_url=\"https://cloud.centos.org/centos/8-stream/x86_64/images/CentOS-Stream-GenericCloud-8-latest.x86_64.qcow2\"\
         \n    # elif [ \"$version\" = \"7\" ]; then\n    #     download_url=\"https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2\"\
-        \n    fi\n    if ! axel -n 8 -o centos-${version}.qcow2 \"$download_url\" 2>/dev/null; then\n        echo\
-        \ \"Axel failed, trying with curl\"\n        if ! curl -fL --retry 3 --retry-delay 5 -o centos-${version}.qcow2\
-        \ \"$download_url\"; then\n            echo \"Failed to download CentOS $version, skipping...\"\n      \
-        \      rm -f centos-${version}.qcow2\n            continue\n        fi\n    fi\n    if [ ! -f \"centos-${version}.qcow2\"\
-        \ ] || [ $(stat -c %s \"centos-${version}.qcow2\") -lt 10485760 ]; then\n        echo \"Download failed\
-        \ or file too small for CentOS $version, skipping...\"\n        rm -f centos-${version}.qcow2\n        continue\n\
-        \    fi\n    chmod 644 centos-${version}.qcow2\n    echo \"Customizing CentOS $version image\"\n    if [\
-        \ \"$version\" = \"7\" ]; then\n        package_manager=\"yum\"\n        grub_config_path=\"/boot/grub2/grub.cfg\"\
-        \n    else\n        package_manager=\"dnf\"\n        grub_config_path=\"/boot/grub2/grub.cfg\"\n    fi\n\
-        \    \n    # 对于 CentOS 8，配置阿里云源（EOL 后使用 vault 作备用）\n    if [ \"$version\" != \"9\" ]; then\n      timeout\
-        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 \\\n        --run-command \"sed -i -e 's|^mirrorlist=|#mirrorlist=|g'\
-        \ -e 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g'\
-        \ -e 's|^baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' -e 's|^#baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g'\
-        \ -e 's|^baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo\
-        \ 2>/dev/null || true\" \\\n        --run-command \"sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g'\
-        \ -e 's|http://vault.centos.org|https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo 2>/dev/null\
-        \ || true\" || true\n    fi\n    \n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n    if ! timeout --kill-after=30s\
-        \ 45m virt-customize -a centos-${version}.qcow2 \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
-        \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong \\\n      --append-line\
-        \ \"/etc/default/grub:# disables OS prober to avoid loopback detection which breaks booting\" \\\n     \
-        \ --append-line \"/etc/default/grub:GRUB_DISABLE_OS_PROBER=true\" \\\n      --run-command \"grub2-mkconfig\
-        \ -o $grub_config_path || true\" \\\n      --run-command \"systemctl enable serial-getty@ttyS1.service ||\
-        \ true\" \\\n      --append-line \"/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com\" \\\n\
-        \      --run-command \"($package_manager install -y epel-release --allowerasing || $package_manager install\
-        \ -y epel-release || true)\" \\\n      --run-command \"$package_manager install -y sudo qemu-guest-agent\
-        \ bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd\
-        \ cronie lsof || true\" \\\n      --run-command \"($package_manager install -y spice-vdagent lldpad || true)\"\
-        \ \\\n      --run-command \"systemctl enable qemu-guest-agent || true\" \\\n      --run-command \"$package_manager\
-        \ -y autoremove && $package_manager -y clean all || true\" \\\n      --delete \"/var/log/*.log\" \\\n  \
-        \    --truncate \"/etc/machine-id\"; then\n        echo \"Failed to configure CentOS $version, skipping...\"\
-        \n        rm -f centos-${version}.qcow2\n        continue\n    fi\n    echo \"Fixing cloud-init configuration\
-        \ for CentOS $version...\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg\"\n  \
-        \  sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth:\
-        \ 1/g' /etc/cloud/cloud.cfg\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"sed -i 's/disable_root:[[:space:]]*true/disable_root: false/g' /etc/cloud/cloud.cfg\"\n\
-        \    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"sed -i\
-        \ 's/disable_root:[[:space:]]*1/disable_root: 0/g' /etc/cloud/cloud.cfg\"\n    echo \"Configuring SSH and\
-        \ root access for CentOS $version...\"\n    if [[ \"$version\" == \"9\" ]]; then\n        echo \"Applying\
-        \ CentOS 9 specific SSH configuration...\"\n        sudo timeout --kill-after=30s 45m virt-customize -a\
-        \ centos-${version}.qcow2 --run-command \"systemctl enable sshd || true\"\n        sudo timeout --kill-after=30s\
-        \ 45m virt-customize -a centos-${version}.qcow2 --run-command \"find /etc/ssh/sshd_config.d/ -name '*.conf'\
-        \ -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' {} \\; 2>/dev/null || true\"\n        sudo\
-        \ timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"find /etc/ssh/sshd_config.d/\
-        \ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/g' {} \\; 2>/dev/null\
-        \ || true\"\n        sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
-        \ \"find /etc/ssh/sshd_config.d/ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication\
-        \ yes/g' {} \\; 2>/dev/null || true\"\n    else\n        echo \"Applying CentOS 8 specific SSH configuration...\"\
-        \n        sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"systemctl\
-        \ enable sshd || true\"\n    fi\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config\"\n    sudo\
-        \ timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication\
-        \ yes/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config\"\
-        \n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"sed -i\
-        \ 's/#*Port.*/Port 22/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize -a\
-        \ centos-${version}.qcow2 --run-command \"sed -i 's/#*AddressFamily.*/AddressFamily any/g' /etc/ssh/sshd_config\"\
-        \n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"sed -i\
-        \ 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s\
-        \ 45m virt-customize -a centos-${version}.qcow2 --run-command \"sed -i 's/#*ListenAddress ::.*/ListenAddress\
-        \ ::/g' /etc/ssh/sshd_config\"\n    echo \"Configuring qemu-guest-agent for CentOS $version...\"\n    echo\
-        \ \"Setting enhanced MOTD and root password for CentOS $version...\"\n    sudo timeout --kill-after=30s\
-        \ 45m virt-customize -a centos-${version}.qcow2 --run-command \"echo '' > /etc/motd\"\n    sudo timeout\
-        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"echo 'CentOS ${version}\
-        \ Stream Cloud Image' >> /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd\"\n \
-        \   sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"echo 'Related\
-        \ repo https://github.com/spiritLHLS/pve' >> /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize\
-        \ -a centos-${version}.qcow2 --run-command \"echo '--by https://t.me/spiritlhl' >> /etc/motd\"\n    sudo\
-        \ timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"echo 'Default root\
-        \ password: oneclickvirt' >> /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"echo root:oneclickvirt | chpasswd\"\n    echo \"Applying security and performance tweaks\
-        \ for CentOS $version...\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"systemctl enable crond || true\"\n    if [[ \"$version\" == \"9\" ]]; then\n        sudo\
-        \ timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command \"dnf clean all ||\
-        \ true\"\n    else\n        sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"yum clean all || true\"\n    fi\n    sudo timeout --kill-after=30s 45m virt-customize\
-        \ -a centos-${version}.qcow2 --run-command \"find /var/log -type f -name '*.log' -exec truncate -s 0 {}\
-        \ \\;\"\n    # 安全加固：禁用algif_aead模块（CVE防护）\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
-        \ --run-command \"mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf\"\
-        \n    echo \"Creating backup and finalizing CentOS $version image\"\n    cp centos-${version}.qcow2 centos-${version}.qcow2.bak\n\
-        \    echo \"Compressing CentOS $version image\"\n    if ! TMPDIR=\"$(pwd)\" timeout --kill-after=30s 45m\
-        \ virt-sparsify --compress --check-tmpdir=ignore centos-${version}.qcow2 centos-${version}-custom.qcow2;\
-        \ then\n        echo \"Failed to compress CentOS $version image, skipping...\"\n        rm -f centos-${version}.qcow2\
-        \ centos-${version}-custom.qcow2 centos-${version}.qcow2.bak\n        continue\n    fi\n    mv centos-${version}-custom.qcow2\
-        \ centos${version}.qcow2\n    ls -lh centos${version}.qcow2\n    file=\"centos${version}.qcow2\"\n    if\
-        \ [ -f \"$file\" ] && [ $(stat -c %s \"$file\") -gt 10485760 ] && [ $(stat -c %s \"$file\") -le 2147483648\
-        \ ]; then\n        echo \"Processing file: $file\"\n        release_id=$(curl -fsS --retry 3 --connect-timeout\
-        \ 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"Accept: application/vnd.github.v3+json\"\
-        \ \"https://api.github.com/repos/${{ github.repository }}/releases/tags/centos\" | jq -r '.id')\n      \
-        \  if [ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n            echo \"Release 'centos'\
-        \ not found, please create it first\"\n            rm -f centos-${version}.qcow2 centos${version}.qcow2\
-        \ centos-${version}.qcow2.bak\n            continue\n        fi\n        echo \"Found release ID: $release_id\"\
-        \n        echo \"Checking if $file already exists in release...\"\n        python3 \"$RUNNER_TEMP/ci-release-assets.py\"\
-        \ centos \"$file\"\n        uploaded_images=$((uploaded_images + 1))\n    else\n        echo \"File $file\
-        \ does not exist, is too small (< 10MB), or is too large (> 2GB)\"\n        if [ -f \"$file\" ]; then\n\
-        \            file_size=$(stat -c %s \"$file\")\n            echo \"File size: $file_size bytes\"\n     \
-        \   fi\n    fi\n    echo \"Cleaning up files for CentOS $version\"\n    rm -f centos-${version}.qcow2 centos${version}.qcow2\
-        \ centos-${version}.qcow2.bak\n    echo \"=== Completed processing CentOS $version ===\"\n    echo \"\"\n\
-        done\necho \"All CentOS versions processed!\"\nif (( uploaded_images != expected_images )); then echo \"\
-        Published $uploaded_images of $expected_images configured images\" >&2; exit 1; fi\n"
+        \n    fi\n    if ! axel -n 8 -o centos-${version}.qcow2 \"$download_url\"\
+        \ 2>/dev/null; then\n        echo \"Axel failed, trying with curl\"\n    \
+        \    if ! curl -fL --retry 3 --retry-delay 5 -o centos-${version}.qcow2 \"\
+        $download_url\"; then\n            echo \"Failed to download CentOS $version,\
+        \ skipping...\"\n            rm -f centos-${version}.qcow2\n            continue\n\
+        \        fi\n    fi\n    if [ ! -f \"centos-${version}.qcow2\" ] || [ $(stat\
+        \ -c %s \"centos-${version}.qcow2\") -lt 10485760 ]; then\n        echo \"\
+        Download failed or file too small for CentOS $version, skipping...\"\n   \
+        \     rm -f centos-${version}.qcow2\n        continue\n    fi\n    chmod 644\
+        \ centos-${version}.qcow2\n    echo \"Customizing CentOS $version image\"\n\
+        \    if [ \"$version\" = \"7\" ]; then\n        package_manager=\"yum\"\n\
+        \        grub_config_path=\"/boot/grub2/grub.cfg\"\n    else\n        package_manager=\"\
+        dnf\"\n        grub_config_path=\"/boot/grub2/grub.cfg\"\n    fi\n    \n \
+        \   # 对于 CentOS 8，配置阿里云源（EOL 后使用 vault 作备用）\n    if [ \"$version\" != \"9\"\
+        \ ]; then\n      timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ \\\n        --run-command \"sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e\
+        \ 's|^metalink=|#metalink=|g' -e 's|^#baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g'\
+        \ -e 's|^baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g'\
+        \ -e 's|^#baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g'\
+        \ -e 's|^baseurl=https://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g'\
+        \ /etc/yum.repos.d/CentOS-*.repo 2>/dev/null || true\" \\\n        --run-command\
+        \ \"sed -i -e 's|^mirrorlist=|#mirrorlist=|g' -e 's|^metalink=|#metalink=|g'\
+        \ -e 's|http://vault.centos.org|https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo\
+        \ 2>/dev/null || true\" || true\n    fi\n    \n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n\
+        \    if ! timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
+        \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong\
+        \ \\\n      --append-line \"/etc/default/grub:# disables OS prober to avoid\
+        \ loopback detection which breaks booting\" \\\n      --append-line \"/etc/default/grub:GRUB_DISABLE_OS_PROBER=true\"\
+        \ \\\n      --run-command \"grub2-mkconfig -o $grub_config_path || true\"\
+        \ \\\n      --run-command \"systemctl enable serial-getty@ttyS1.service ||\
+        \ true\" \\\n      --append-line \"/etc/systemd/timesyncd.conf:NTP=time.apple.com\
+        \ time.windows.com\" \\\n      --run-command \"($package_manager install -y\
+        \ epel-release --allowerasing || $package_manager install -y epel-release\
+        \ || true)\" \\\n      --run-command \"$package_manager install -y curl openssh-server\
+        \ qemu-guest-agent\" \\\n      --run-command \"$package_manager install -y\
+        \ sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils\
+        \ nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || echo\
+        \ Optional guest utilities were unavailable >&2\" \\\n      --run-command\
+        \ \"($package_manager install -y spice-vdagent lldpad || true)\" \\\n    \
+        \  --run-command \"systemctl enable qemu-guest-agent\" \\\n      --run-command\
+        \ \"$package_manager -y autoremove && $package_manager -y clean all || true\"\
+        \ \\\n      --delete \"/var/log/*.log\" \\\n      --truncate \"/etc/machine-id\"\
+        ; then\n        echo \"Failed to configure CentOS $version, skipping...\"\n\
+        \        rm -f centos-${version}.qcow2\n        continue\n    fi\n    echo\
+        \ \"Fixing cloud-init configuration for CentOS $version...\"\n    sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"sed -i 's/ssh_pwauth:[[:space:]]*false/ssh_pwauth: true/g' /etc/cloud/cloud.cfg\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ --run-command \"sed -i 's/ssh_pwauth:[[:space:]]*0/ssh_pwauth: 1/g' /etc/cloud/cloud.cfg\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ --run-command \"sed -i 's/disable_root:[[:space:]]*true/disable_root: false/g'\
+        \ /etc/cloud/cloud.cfg\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a centos-${version}.qcow2 --run-command \"sed -i 's/disable_root:[[:space:]]*1/disable_root:\
+        \ 0/g' /etc/cloud/cloud.cfg\"\n    echo \"Configuring SSH and root access\
+        \ for CentOS $version...\"\n    if [[ \"$version\" == \"9\" ]]; then\n   \
+        \     echo \"Applying CentOS 9 specific SSH configuration...\"\n        sudo\
+        \ timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"systemctl enable sshd\"\n        sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a centos-${version}.qcow2 --run-command \"find /etc/ssh/sshd_config.d/\
+        \ -name '*.conf' -exec sed -i 's/#*PermitRootLogin.*/PermitRootLogin yes/g'\
+        \ {} \\; 2>/dev/null || true\"\n        sudo timeout --kill-after=30s 45m\
+        \ virt-customize -a centos-${version}.qcow2 --run-command \"find /etc/ssh/sshd_config.d/\
+        \ -name '*.conf' -exec sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication\
+        \ yes/g' {} \\; 2>/dev/null || true\"\n        sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a centos-${version}.qcow2 --run-command \"find /etc/ssh/sshd_config.d/\
+        \ -name '*.conf' -exec sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication\
+        \ yes/g' {} \\; 2>/dev/null || true\"\n    else\n        echo \"Applying CentOS\
+        \ 8 specific SSH configuration...\"\n        sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a centos-${version}.qcow2 --run-command \"systemctl\
+        \ enable sshd\"\n    fi\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a centos-${version}.qcow2 --run-command \"sed -i 's/#*PermitRootLogin.*/PermitRootLogin\
+        \ yes/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a centos-${version}.qcow2 --run-command \"sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication\
+        \ yes/g' /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a centos-${version}.qcow2 --run-command \"sed -i 's/PasswordAuthentication\
+        \ no/PasswordAuthentication yes/g' /etc/ssh/sshd_config\"\n    sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"sed -i 's/#*Port.*/Port 22/g' /etc/ssh/sshd_config\"\n    sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"sed -i 's/#*AddressFamily.*/AddressFamily any/g' /etc/ssh/sshd_config\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ --run-command \"sed -i 's/#*ListenAddress 0.0.0.0.*/ListenAddress 0.0.0.0/g'\
+        \ /etc/ssh/sshd_config\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a centos-${version}.qcow2 --run-command \"sed -i 's/#*ListenAddress ::.*/ListenAddress\
+        \ ::/g' /etc/ssh/sshd_config\"\n    echo \"Configuring qemu-guest-agent for\
+        \ CentOS $version...\"\n    echo \"Setting enhanced MOTD and root password\
+        \ for CentOS $version...\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a centos-${version}.qcow2 --run-command \"echo '' > /etc/motd\"\n    sudo\
+        \ timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"echo 'CentOS ${version} Stream Cloud Image' >> /etc/motd\"\n    sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >>\
+        \ /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ --run-command \"echo 'Related repo https://github.com/spiritLHLS/pve' >>\
+        \ /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ --run-command \"echo '--by https://t.me/spiritlhl' >> /etc/motd\"\n    sudo\
+        \ timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"echo 'Default root password: oneclickvirt' >> /etc/motd\"\n    sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"echo root:oneclickvirt | chpasswd\"\n    echo \"Applying security and\
+        \ performance tweaks for CentOS $version...\"\n    sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a centos-${version}.qcow2 --run-command \"systemctl\
+        \ enable crond || true\"\n    if [[ \"$version\" == \"9\" ]]; then\n     \
+        \   sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ --run-command \"dnf clean all || true\"\n    else\n        sudo timeout\
+        \ --kill-after=30s 45m virt-customize -a centos-${version}.qcow2 --run-command\
+        \ \"yum clean all || true\"\n    fi\n    sudo timeout --kill-after=30s 45m\
+        \ virt-customize -a centos-${version}.qcow2 --run-command \"find /var/log\
+        \ -type f -name '*.log' -exec truncate -s 0 {} \\;\"\n    # 安全加固：禁用algif_aead模块（CVE防护）\n\
+        \    sudo timeout --kill-after=30s 45m virt-customize -a centos-${version}.qcow2\
+        \ --run-command \"mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false'\
+        \ > /etc/modprobe.d/disable-algif.conf\"\n    echo \"Creating backup and finalizing\
+        \ CentOS $version image\"\n    cp centos-${version}.qcow2 centos-${version}.qcow2.bak\n\
+        \    echo \"Compressing CentOS $version image\"\n    if ! TMPDIR=\"$(pwd)\"\
+        \ timeout --kill-after=30s 45m virt-sparsify --compress --check-tmpdir=ignore\
+        \ centos-${version}.qcow2 centos-${version}-custom.qcow2; then\n        echo\
+        \ \"Failed to compress CentOS $version image, skipping...\"\n        rm -f\
+        \ centos-${version}.qcow2 centos-${version}-custom.qcow2 centos-${version}.qcow2.bak\n\
+        \        continue\n    fi\n    mv centos-${version}-custom.qcow2 centos${version}.qcow2\n\
+        \    ls -lh centos${version}.qcow2\n    file=\"centos${version}.qcow2\"\n\
+        \    if [ -f \"$file\" ] && [ $(stat -c %s \"$file\") -gt 10485760 ] && [\
+        \ $(stat -c %s \"$file\") -le 2147483648 ]; then\n        echo \"Processing\
+        \ file: $file\"\n        release_id=$(curl -fsS --retry 3 --connect-timeout\
+        \ 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\"\
+        \ -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/${{\
+        \ github.repository }}/releases/tags/centos\" | jq -r '.id')\n        if [\
+        \ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n         \
+        \   echo \"Release 'centos' not found, please create it first\"\n        \
+        \    rm -f centos-${version}.qcow2 centos${version}.qcow2 centos-${version}.qcow2.bak\n\
+        \            continue\n        fi\n        echo \"Found release ID: $release_id\"\
+        \n        echo \"Checking if $file already exists in release...\"\n      \
+        \  python3 .github/scripts/hosted_image_test.py --file \"$file\" --runtime\
+        \ qemu\n        python3 \"$RUNNER_TEMP/ci-release-assets.py\" centos \"$file\"\
+        \n        uploaded_images=$((uploaded_images + 1))\n    else\n        echo\
+        \ \"File $file does not exist, is too small (< 10MB), or is too large (> 2GB)\"\
+        \n        if [ -f \"$file\" ]; then\n            file_size=$(stat -c %s \"\
+        $file\")\n            echo \"File size: $file_size bytes\"\n        fi\n \
+        \   fi\n    echo \"Cleaning up files for CentOS $version\"\n    rm -f centos-${version}.qcow2\
+        \ centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"=== Completed\
+        \ processing CentOS $version ===\"\n    echo \"\"\ndone\necho \"All CentOS\
+        \ versions processed!\"\nif (( uploaded_images != expected_images )); then\
+        \ echo \"Published $uploaded_images of $expected_images configured images\"\
+        \ >&2; exit 1; fi\n"
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       LIBGUESTFS_BACKEND: direct
       LIBGUESTFS_MEMSIZE: '2048'
@@ -146,3 +194,5 @@ permissions:
 concurrency:
   group: cloud-image-${{ github.workflow }}
   cancel-in-progress: false
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'

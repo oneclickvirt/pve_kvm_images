@@ -6,6 +6,8 @@ import tarfile
 import tempfile
 import threading
 import unittest
+from unittest import mock
+import subprocess
 
 spec=importlib.util.spec_from_file_location('hosted_runtime',Path(__file__).resolve().parents[1]/'scripts/hosted_image_test.py')
 runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime)
@@ -54,5 +56,20 @@ class GuestAgentTests(unittest.TestCase):
                 self.assertIn('/var/lib/cloud/seed/nocloud-net/network-config',manifest)
                 self.assertIn('dhcp4: true',archive.extractfile('templates/network-config.tpl').read().decode())
 
+
+
+class SSHTransportTests(unittest.TestCase):
+    def test_password_is_only_in_subprocess_environment(self):
+        with mock.patch.object(runtime, 'run', return_value=mock.Mock(stdout='boot-id')) as execute:
+            self.assertEqual(runtime.ssh_command(22022, Path('/tmp/key'), runtime.CHECK, 'fixture-password'), 'boot-id')
+        args, options = execute.call_args
+        self.assertNotIn('fixture-password', ' '.join(args[0]))
+        self.assertEqual(options['env']['SSHPASS'], 'fixture-password')
+        self.assertIn('root@127.0.0.1', args[0])
+
+    def test_guest_assertion_failure_is_not_success(self):
+        with mock.patch.object(runtime, 'run', side_effect=subprocess.CalledProcessError(1, ['ssh'], stderr='network failed')):
+            with self.assertRaises(subprocess.CalledProcessError):
+                runtime.ssh_command(22022, Path('/tmp/key'), runtime.CHECK)
 
 if __name__=='__main__':unittest.main()

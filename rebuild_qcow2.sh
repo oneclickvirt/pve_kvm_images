@@ -104,7 +104,7 @@ shopt -s nullglob
 for f in /etc/yum.repos.d/*.repo; do
     [[ -f \"\$f\" ]] || continue
     cp -a \"\$f\" \"\$f.bak\" 2>/dev/null || true
-    if grep -Eq "(mirror\\.centos\\.org|vault\\.centos\\.org|repo\\.almalinux\\.org|rockylinux\\.org)" \"\$f\"; then
+    if grep -Eq \"(mirror\\.centos\\.org|vault\\.centos\\.org|repo\\.almalinux\\.org|rockylinux\\.org)\" \"\$f\"; then
         # 关闭mirrorlist/metalink，避免走官方镜像列表（仅针对RHEL系常见repo）
         sed -i -E -e \"s/^[[:space:]]*mirrorlist=/#mirrorlist=/g\" -e \"s/^[[:space:]]*metalink=/#metalink=/g\" \"\$f\"
     fi

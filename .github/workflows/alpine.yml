@@ -9,7 +9,9 @@ jobs:
         set -euo pipefail
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/ci_network.sh" -o "$RUNNER_TEMP/ci-network.sh"
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/release_assets.py" -o "$RUNNER_TEMP/ci-release-assets.py"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Prepare hosted VM runtime validation
+      run: bash .github/scripts/prepare_hosted_runtime.sh qemu
     - name: check path
       run: |
         pwd
@@ -21,101 +23,135 @@ jobs:
       run: |
         bash .github/scripts/prepare_guestfs.sh
     - name: Build Alpine Images
-      run: "source \"$RUNNER_TEMP/ci-network.sh\"\nset -euo pipefail\nuploaded_images=0\nexport LIBGUESTFS_BACKEND=direct\n\
-        declare -A alpine_versions\nalpine_versions[\"3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"3.21\"\nalpine_versions[\"\
-        3.20\"]=\"3.20\"\ndownload_alpine_image() {\n    python3 .github/scripts/download_alpine_image.py \"$1\"\
-        \ \"$2\"\n}\n\nimage_versions=(3.22 3.21 3.20)\nexpected_images=${#image_versions[@]}\nfor version in \"\
-        ${image_versions[@]}\"; do\n    echo \"=== Processing Alpine $version ===\"\n    rm -f alpine-${version}.qcow2\
-        \ alpine-${version}-custom.qcow2 alpine${version}.qcow2\n    \n    echo \"Downloading Alpine $version Cloud\
-        \ Image\"\n    if ! download_alpine_image \"$version\" \"alpine-${version}.qcow2\"; then\n        echo \"\
-        Failed to download Alpine $version, skipping...\"\n        continue\n    fi\n    \n    if [ ! -f \"alpine-${version}.qcow2\"\
-        \ ] || [ $(stat -c %s \"alpine-${version}.qcow2\") -lt 10485760 ]; then\n        echo \"Download failed\
-        \ or file too small for Alpine $version, skipping...\"\n        rm -f alpine-${version}.qcow2\n        continue\n\
-        \    fi\n    \n    chmod 644 alpine-${version}.qcow2\n    \n    # Official generic images have a small root\
-        \ partition. Reserve enough\n    # space for a kernel upgrade and the required guest utilities.\n    root_part=$(virt-filesystems\
-        \ -a \"alpine-${version}.qcow2\" --filesystems --long | awk '$1 ~ /^\\/dev\\/(sd[a-z]|vd[a-z])[0-9]*$/ &&\
-        \ $3 ~ /^(ext4|btrfs|xfs)$/ {print $1}' | tail -1)\n    if [[ -z \"$root_part\" ]]; then\n        echo \"\
-        No physical Alpine root filesystem partition was detected\" >&2\n        exit 1\n    fi\n    original_size=$(qemu-img\
-        \ info --output=json \"alpine-${version}.qcow2\" | jq -er '.\"virtual-size\"')\n    [[ \"$original_size\"\
-        \ =~ ^[0-9]+$ ]]\n    expanded_size=$((original_size + 1073741824))\n    if (( expanded_size < 4294967296\
-        \ )); then expanded_size=4294967296; fi\n    echo \"Expanding Alpine root partition $root_part to $expanded_size\
-        \ bytes\"\n    if [[ \"$root_part\" =~ ^/dev/(sd[a-z]|vd[a-z])$ ]]; then\n        # The verified official\
-        \ 3.20 image is an ext4 filesystem on the\n        # whole 200MB disk, without a partition table. Preserve\
-        \ that layout.\n        root_type=$(virt-filesystems -a \"alpine-${version}.qcow2\" --filesystems --long\
-        \ | awk -v root=\"$root_part\" '$1 == root {print $3}')\n        [[ \"$root_type\" == ext4 ]]\n        qemu-img\
-        \ resize -f qcow2 \"alpine-${version}.qcow2\" \"$expanded_size\"\n        guestfish -a \"alpine-${version}.qcow2\"\
-        \ run : resize2fs \"$root_part\"\n    else\n        rm -f \"alpine-${version}-expanded.qcow2\"\n       \
-        \ qemu-img create -f qcow2 \"alpine-${version}-expanded.qcow2\" \"$expanded_size\"\n        virt-resize\
-        \ --expand \"$root_part\" \"alpine-${version}.qcow2\" \"alpine-${version}-expanded.qcow2\"\n        mv \"\
-        alpine-${version}-expanded.qcow2\" \"alpine-${version}.qcow2\"\n    fi\n\n    echo \"Customizing Alpine\
-        \ $version image\"\n    # 配置阿里云源\n    timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
-        \ \\\n      --run-command \"sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories\
-        \ || true\" \\\n      --run-command \"sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g'\
-        \ /etc/apk/repositories || true\" || true\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n    if ! timeout --kill-after=30s\
-        \ 45m virt-customize -a alpine-${version}.qcow2 \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
-        \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong \\\n      --append-line\
-        \ \"/etc/conf.d/ntpd:NTPD_OPTS=\\\"-N -p time.apple.com -p time.windows.com\\\"\" \\\n      --run-command\
-        \ \"apk update && apk upgrade\" \\\n      --run-command \"apk add sudo qemu-guest-agent bash-completion\
-        \ unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools zstd cronie lsof openssh\
-        \ openrc\" \\\n      --run-command \"echo '#!/sbin/openrc-run' > /etc/init.d/qemu-guest-agent\" \\\n   \
-        \   --run-command \"echo 'name=QEMU Guest Agent' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command\
-        \ \"echo 'command=/usr/bin/qemu-ga' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"printf 'command_args=\\\
-        \"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --daemonize --pidfile=/run/qemu-guest-agent.pid\\\
-        \"\\n' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"echo 'pidfile=/run/qemu-guest-agent.pid'\
-        \ >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"printf 'depend() { need localmount; after\
-        \ bootmisc; }\\n' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"chmod +x /etc/init.d/qemu-guest-agent\"\
-        \ \\\n      --run-command \"rc-update add qemu-guest-agent boot || true\" \\\n      --run-command \"rc-update\
-        \ add sshd boot || true\" \\\n      --run-command \"apk cache clean || true\" \\\n      --delete \"/var/log/*.log\"\
-        \ \\\n      --delete \"/var/cache/apk/*\"; then\n        echo \"Failed to configure Alpine $version, skipping...\"\
-        \n        rm -f alpine-${version}.qcow2\n        continue\n    fi\n    \n    echo \"Configuring SSH and\
-        \ root access for Alpine $version...\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
-        \ --run-command \"rc-update add sshd boot || true\"\n    sudo timeout --kill-after=30s 45m virt-customize\
-        \ -a alpine-${version}.qcow2 --run-command \"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin\
-        \ yes/g' /etc/ssh/sshd_config || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
-        \ --run-command \"sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config\
-        \ || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command\
-        \ \"sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true\"\n \
-        \   sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"sed -i 's/#Port\
-        \ 22/Port 22/g' /etc/ssh/sshd_config || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a\
-        \ alpine-${version}.qcow2 --run-command \"sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config\
-        \ || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command\
-        \ \"sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g' /etc/ssh/sshd_config || true\"\n    sudo timeout\
-        \ --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"sed -i 's/#ListenAddress\
-        \ ::/ListenAddress ::/g' /etc/ssh/sshd_config || true\"\n    \n    echo \"Configuring qemu-guest-agent for\
-        \ Alpine $version...\"\n    \n    echo \"Setting root password and MOTD for Alpine $version...\"\n    sudo\
-        \ timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"echo root:oneclickvirt\
-        \ | chpasswd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command\
-        \ \"echo '' > /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
-        \ --run-command \"echo 'Modified from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd\"\n \
-        \   sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"echo 'Related\
-        \ repo https://github.com/spiritLHLS/pve' >> /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize\
-        \ -a alpine-${version}.qcow2 --run-command \"echo '--by https://t.me/spiritlhl' >> /etc/motd\"\n    # 安全加固：禁用algif_aead模块（CVE防护）\n\
-        \    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command \"mkdir -p\
-        \ /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf\"\n    \n\
-        \    echo \"Compressing Alpine $version image\"\n    if ! TMPDIR=\"$(pwd)\" timeout --kill-after=30s 45m\
-        \ virt-sparsify --compress --check-tmpdir=ignore alpine-${version}.qcow2 alpine-${version}-custom.qcow2;\
-        \ then\n        echo \"Failed to compress Alpine $version image, skipping...\"\n        rm -f alpine-${version}.qcow2\
-        \ alpine-${version}-custom.qcow2\n        continue\n    fi\n    \n    mv alpine-${version}-custom.qcow2\
-        \ alpine${version}.qcow2\n    ls -lh alpine${version}.qcow2\n    \n    file=\"alpine${version}.qcow2\"\n\
-        \    if [ -f \"$file\" ] && [ $(stat -c %s \"$file\") -gt 10485760 ] && [ $(stat -c %s \"$file\") -le 2147483648\
-        \ ]; then\n        echo \"Processing file: $file\"\n        \n        release_id=$(curl -fsS --retry 3 --connect-timeout\
-        \ 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\" -H \"Accept: application/vnd.github.v3+json\"\
-        \ \"https://api.github.com/repos/${{ github.repository }}/releases/tags/alpine\" | jq -r '.id')\n      \
-        \  if [ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n            echo \"Release 'alpine'\
-        \ not found, please create it first\"\n            rm -f alpine-${version}.qcow2 alpine${version}.qcow2\n\
-        \            continue\n        fi\n        \n        echo \"Found release ID: $release_id\"\n        \n\
-        \        echo \"Checking if $file already exists in release...\"\n        python3 \"$RUNNER_TEMP/ci-release-assets.py\"\
-        \ alpine \"$file\"\n        uploaded_images=$((uploaded_images + 1))\n    else\n        echo \"File $file\
-        \ does not exist, is too small (< 10MB), or is too large (> 2GB)\"\n        if [ -f \"$file\" ]; then\n\
-        \            file_size=$(stat -c %s \"$file\")\n            echo \"File size: $file_size bytes\"\n     \
-        \   fi\n    fi\n    \n    echo \"Cleaning up files for Alpine $version\"\n    rm -f alpine-${version}.qcow2\
-        \ alpine${version}.qcow2\n    echo \"=== Completed processing Alpine $version ===\"\n    echo \"\"\ndone\n\
-        echo \"All Alpine versions processed!\"\n\nif (( uploaded_images != expected_images )); then echo \"Published\
-        \ $uploaded_images of $expected_images configured images\" >&2; exit 1; fi\n"
+      run: "source \"$RUNNER_TEMP/ci-network.sh\"\nset -euo pipefail\nuploaded_images=0\n\
+        export LIBGUESTFS_BACKEND=direct\ndeclare -A alpine_versions\nalpine_versions[\"\
+        3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"3.21\"\nalpine_versions[\"3.20\"\
+        ]=\"3.20\"\ndownload_alpine_image() {\n    python3 .github/scripts/download_alpine_image.py\
+        \ \"$1\" \"$2\"\n}\n\nimage_versions=(3.22 3.21 3.20)\nexpected_images=${#image_versions[@]}\n\
+        for version in \"${image_versions[@]}\"; do\n    echo \"=== Processing Alpine\
+        \ $version ===\"\n    rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2\
+        \ alpine${version}.qcow2\n    \n    echo \"Downloading Alpine $version Cloud\
+        \ Image\"\n    if ! download_alpine_image \"$version\" \"alpine-${version}.qcow2\"\
+        ; then\n        echo \"Failed to download Alpine $version, skipping...\"\n\
+        \        continue\n    fi\n    \n    if [ ! -f \"alpine-${version}.qcow2\"\
+        \ ] || [ $(stat -c %s \"alpine-${version}.qcow2\") -lt 10485760 ]; then\n\
+        \        echo \"Download failed or file too small for Alpine $version, skipping...\"\
+        \n        rm -f alpine-${version}.qcow2\n        continue\n    fi\n    \n\
+        \    chmod 644 alpine-${version}.qcow2\n    \n    # Official generic images\
+        \ have a small root partition. Reserve enough\n    # space for a kernel upgrade\
+        \ and the required guest utilities.\n    root_part=$(virt-filesystems -a \"\
+        alpine-${version}.qcow2\" --filesystems --long | awk '$1 ~ /^\\/dev\\/(sd[a-z]|vd[a-z])[0-9]*$/\
+        \ && $3 ~ /^(ext4|btrfs|xfs)$/ {print $1}' | tail -1)\n    if [[ -z \"$root_part\"\
+        \ ]]; then\n        echo \"No physical Alpine root filesystem partition was\
+        \ detected\" >&2\n        exit 1\n    fi\n    original_size=$(qemu-img info\
+        \ --output=json \"alpine-${version}.qcow2\" | jq -er '.\"virtual-size\"')\n\
+        \    [[ \"$original_size\" =~ ^[0-9]+$ ]]\n    expanded_size=$((original_size\
+        \ + 1073741824))\n    if (( expanded_size < 4294967296 )); then expanded_size=4294967296;\
+        \ fi\n    echo \"Expanding Alpine root partition $root_part to $expanded_size\
+        \ bytes\"\n    if [[ \"$root_part\" =~ ^/dev/(sd[a-z]|vd[a-z])$ ]]; then\n\
+        \        # The verified official 3.20 image is an ext4 filesystem on the\n\
+        \        # whole 200MB disk, without a partition table. Preserve that layout.\n\
+        \        root_type=$(virt-filesystems -a \"alpine-${version}.qcow2\" --filesystems\
+        \ --long | awk -v root=\"$root_part\" '$1 == root {print $3}')\n        [[\
+        \ \"$root_type\" == ext4 ]]\n        qemu-img resize -f qcow2 \"alpine-${version}.qcow2\"\
+        \ \"$expanded_size\"\n        guestfish -a \"alpine-${version}.qcow2\" run\
+        \ : resize2fs \"$root_part\"\n    else\n        rm -f \"alpine-${version}-expanded.qcow2\"\
+        \n        qemu-img create -f qcow2 \"alpine-${version}-expanded.qcow2\" \"\
+        $expanded_size\"\n        virt-resize --expand \"$root_part\" \"alpine-${version}.qcow2\"\
+        \ \"alpine-${version}-expanded.qcow2\"\n        mv \"alpine-${version}-expanded.qcow2\"\
+        \ \"alpine-${version}.qcow2\"\n    fi\n\n    echo \"Customizing Alpine $version\
+        \ image\"\n    # 配置阿里云源\n    timeout --kill-after=30s 45m virt-customize -a\
+        \ alpine-${version}.qcow2 \\\n      --run-command \"sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g'\
+        \ /etc/apk/repositories || true\" \\\n      --run-command \"sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g'\
+        \ /etc/apk/repositories || true\" || true\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n\
+        \    if ! timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
+        \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong\
+        \ \\\n      --append-line \"/etc/conf.d/ntpd:NTPD_OPTS=\\\"-N -p time.apple.com\
+        \ -p time.windows.com\\\"\" \\\n      --run-command \"apk update && apk upgrade\"\
+        \ \\\n      --run-command \"apk add sudo qemu-guest-agent bash-completion\
+        \ unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools\
+        \ zstd cronie lsof openssh openrc\" \\\n      --run-command \"echo '#!/sbin/openrc-run'\
+        \ > /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"echo 'name=QEMU\
+        \ Guest Agent' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"\
+        echo 'command=/usr/bin/qemu-ga' >> /etc/init.d/qemu-guest-agent\" \\\n   \
+        \   --run-command \"printf 'command_args=\\\"--method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0\
+        \ --daemonize --pidfile=/run/qemu-guest-agent.pid\\\"\\n' >> /etc/init.d/qemu-guest-agent\"\
+        \ \\\n      --run-command \"echo 'pidfile=/run/qemu-guest-agent.pid' >> /etc/init.d/qemu-guest-agent\"\
+        \ \\\n      --run-command \"printf 'depend() { need localmount; after bootmisc;\
+        \ }\\n' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"chmod\
+        \ +x /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"rc-update add\
+        \ qemu-guest-agent boot\" \\\n      --run-command \"rc-update add sshd boot\"\
+        \ \\\n      --run-command \"apk cache clean || true\" \\\n      --delete \"\
+        /var/log/*.log\" \\\n      --delete \"/var/cache/apk/*\"; then\n        echo\
+        \ \"Failed to configure Alpine $version, skipping...\"\n        rm -f alpine-${version}.qcow2\n\
+        \        continue\n    fi\n    \n    echo \"Configuring SSH and root access\
+        \ for Alpine $version...\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a alpine-${version}.qcow2 --run-command \"rc-update add sshd boot\"\n \
+        \   sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin\
+        \ yes/g' /etc/ssh/sshd_config || true\"\n    sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a alpine-${version}.qcow2 --run-command \"sed -i 's/#PasswordAuthentication\
+        \ yes/PasswordAuthentication yes/g' /etc/ssh/sshd_config || true\"\n    sudo\
+        \ timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 --run-command\
+        \ \"sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config\
+        \ || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"sed -i 's/#Port 22/Port 22/g' /etc/ssh/sshd_config || true\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"sed -i 's/#AddressFamily any/AddressFamily any/g' /etc/ssh/sshd_config\
+        \ || true\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/g'\
+        \ /etc/ssh/sshd_config || true\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a alpine-${version}.qcow2 --run-command \"sed -i 's/#ListenAddress ::/ListenAddress\
+        \ ::/g' /etc/ssh/sshd_config || true\"\n    \n    echo \"Configuring qemu-guest-agent\
+        \ for Alpine $version...\"\n    \n    echo \"Setting root password and MOTD\
+        \ for Alpine $version...\"\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a alpine-${version}.qcow2 --run-command \"echo root:oneclickvirt | chpasswd\"\
+        \n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"echo '' > /etc/motd\"\n    sudo timeout --kill-after=30s\
+        \ 45m virt-customize -a alpine-${version}.qcow2 --run-command \"echo 'Modified\
+        \ from https://github.com/oneclickvirt/pve_kvm_images' >> /etc/motd\"\n  \
+        \  sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"echo 'Related repo https://github.com/spiritLHLS/pve' >>\
+        \ /etc/motd\"\n    sudo timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
+        \ --run-command \"echo '--by https://t.me/spiritlhl' >> /etc/motd\"\n    #\
+        \ 安全加固：禁用algif_aead模块（CVE防护）\n    sudo timeout --kill-after=30s 45m virt-customize\
+        \ -a alpine-${version}.qcow2 --run-command \"mkdir -p /etc/modprobe.d && echo\
+        \ 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf\"\n\
+        \    \n    echo \"Compressing Alpine $version image\"\n    if ! TMPDIR=\"\
+        $(pwd)\" timeout --kill-after=30s 45m virt-sparsify --compress --check-tmpdir=ignore\
+        \ alpine-${version}.qcow2 alpine-${version}-custom.qcow2; then\n        echo\
+        \ \"Failed to compress Alpine $version image, skipping...\"\n        rm -f\
+        \ alpine-${version}.qcow2 alpine-${version}-custom.qcow2\n        continue\n\
+        \    fi\n    \n    mv alpine-${version}-custom.qcow2 alpine${version}.qcow2\n\
+        \    ls -lh alpine${version}.qcow2\n    \n    file=\"alpine${version}.qcow2\"\
+        \n    if [ -f \"$file\" ] && [ $(stat -c %s \"$file\") -gt 10485760 ] && [\
+        \ $(stat -c %s \"$file\") -le 2147483648 ]; then\n        echo \"Processing\
+        \ file: $file\"\n        \n        release_id=$(curl -fsS --retry 3 --connect-timeout\
+        \ 10 --max-time 120 -H \"Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}\"\
+        \ -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/${{\
+        \ github.repository }}/releases/tags/alpine\" | jq -r '.id')\n        if [\
+        \ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n         \
+        \   echo \"Release 'alpine' not found, please create it first\"\n        \
+        \    rm -f alpine-${version}.qcow2 alpine${version}.qcow2\n            continue\n\
+        \        fi\n        \n        echo \"Found release ID: $release_id\"\n  \
+        \      \n        echo \"Checking if $file already exists in release...\"\n\
+        \        python3 .github/scripts/hosted_image_test.py --file \"$file\" --runtime\
+        \ qemu\n        python3 \"$RUNNER_TEMP/ci-release-assets.py\" alpine \"$file\"\
+        \n        uploaded_images=$((uploaded_images + 1))\n    else\n        echo\
+        \ \"File $file does not exist, is too small (< 10MB), or is too large (> 2GB)\"\
+        \n        if [ -f \"$file\" ]; then\n            file_size=$(stat -c %s \"\
+        $file\")\n            echo \"File size: $file_size bytes\"\n        fi\n \
+        \   fi\n    \n    echo \"Cleaning up files for Alpine $version\"\n    rm -f\
+        \ alpine-${version}.qcow2 alpine${version}.qcow2\n    echo \"=== Completed\
+        \ processing Alpine $version ===\"\n    echo \"\"\ndone\necho \"All Alpine\
+        \ versions processed!\"\n\nif (( uploaded_images != expected_images )); then\
+        \ echo \"Published $uploaded_images of $expected_images configured images\"\
+        \ >&2; exit 1; fi\n"
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       LIBGUESTFS_BACKEND: direct
       LIBGUESTFS_MEMSIZE: '2048'
@@ -128,3 +164,5 @@ permissions:
 concurrency:
   group: cloud-image-${{ github.workflow }}
   cancel-in-progress: false
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'

@@ -9,12 +9,17 @@ name: Hosted published image tests
         - smoke
         - full
         default: smoke
+      image:
+        description: Exact asset filename; empty selects the suite
+        type: string
+        default: ''
   schedule:
   - cron: 27 3 * * 1
 permissions:
   contents: read
 concurrency:
-  group: hosted-published-image-tests
+  group: hosted-published-image-tests-${{ inputs.image || inputs.scope || 'smoke'
+    }}
   cancel-in-progress: false
 jobs:
   catalog:
@@ -23,12 +28,14 @@ jobs:
     outputs:
       matrix: ${{ steps.catalog.outputs.matrix }}
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - id: catalog
       env:
         GH_TOKEN: ${{ github.token }}
         SCOPE: ${{ inputs.scope || 'smoke' }}
-      run: python3 .github/scripts/published_image_suite.py matrix --scope "$SCOPE" --kind vm
+        IMAGE: ${{ inputs.image }}
+      run: python3 .github/scripts/published_image_suite.py matrix --scope "$SCOPE"
+        --kind vm
   test:
     needs: catalog
     runs-on: ${{ matrix.runner }}
@@ -38,7 +45,7 @@ jobs:
       max-parallel: 4
       matrix: ${{ fromJSON(needs.catalog.outputs.matrix) }}
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - name: Prepare disposable runtime
       run: bash .github/scripts/prepare_hosted_runtime.sh qemu
     - name: Download verified published asset
@@ -50,4 +57,7 @@ jobs:
     - name: Validate guest boot, SSH, network and restart
       env:
         IMAGE: ${{ matrix.image }}
-      run: python3 .github/scripts/hosted_image_test.py --file "$IMAGE" --runtime qemu
+      run: python3 .github/scripts/hosted_image_test.py --file "$IMAGE" --runtime
+        qemu
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
