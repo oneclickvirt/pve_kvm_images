@@ -116,6 +116,23 @@ class QEMUNetworkTests(unittest.TestCase):
         self.assertNotIn('name: eth0',config)
 
 
+class FirmwareFallbackTests(unittest.TestCase):
+    def test_prior_kernel_does_not_hide_a_stalled_efi_loader_after_relabel_reboot(self):
+        console = ('BdsDxe: starting Boot0001 "UEFI Misc Device"\n'
+                   'Linux version 5.14.0\nRelabel all filesystems\n'
+                   'reboot: Restarting system\n'
+                   'BdsDxe: starting Boot0003 "rocky" from /EFI/rocky/shimx64.efi\n')
+        self.assertTrue(runtime.firmware_without_kernel(console))
+
+    def test_new_kernel_after_efi_loader_is_not_a_firmware_failure(self):
+        console = 'BdsDxe: starting Boot0003 "rocky"\nLinux version 5.14.0\n'
+        self.assertFalse(runtime.firmware_without_kernel(console))
+
+    def test_bios_boot_and_running_kernel_do_not_trigger_efi_fallback(self):
+        for console in ['SeaBIOS\nBooting from Hard Disk\n', 'Linux version 5.14.0\nsshd started\n', '']:
+            self.assertFalse(runtime.firmware_without_kernel(console))
+
+
 class NativeStartupDiagnosticsTests(unittest.TestCase):
     def test_start_failure_prints_bounded_incus_instance_log(self):
         failure=subprocess.CalledProcessError(1,['sudo','incus','start','test-image'],stderr='forkstart failed')

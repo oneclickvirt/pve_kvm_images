@@ -220,6 +220,16 @@ def ssh_command(port, key, script, password=None):
     return result.stdout.strip()
 
 
+def firmware_without_kernel(console):
+    # An EFI boot entry can hang in shim after a guest-requested first-boot
+    # relabel/reboot. The earlier kernel's log is not evidence of this boot.
+    last = console.rfind('BdsDxe: starting Boot')
+    if last < 0:
+        return False
+    attempt = console[last:]
+    return not any(marker in attempt for marker in ('Linux version ', 'Command line:', 'Booting Linux'))
+
+
 def qemu_network_config():
     return f'version: 2\nethernets:\n  hosted:\n    match:\n      macaddress: {HOSTED_NIC_MAC}\n    dhcp4: true\n'
 
@@ -284,11 +294,16 @@ def qemu_test(folder, disk):
         if storage=='sata':devices=['-device','ide-hd,drive=guestdisk,bus=ide.0,bootindex=1']
         process=subprocess.Popen([command[0]]+devices+command[1:]+([] if bios else firmware(arch,folder)),
                                  stdout=log,stderr=log,env=isolated_environment())
+    initial_deadline=None
+    readiness_budget=1500 if not accelerated else 600
     def ready(previous=None, allow_bios=False):
         nonlocal transport,ssh_password,retry_reason
-        deadline=time.monotonic()+(1500 if not accelerated else 600)
+        # Compatibility attempts share one boot budget. Reboot receives its
+        # own bounded budget, rather than resetting time for every fallback.
+        deadline=initial_deadline if previous is None else time.monotonic()+readiness_budget
         last_error='guest execution unavailable';agent_disabled=False
         began=time.monotonic()
+        serial_size=-1;serial_changed=began
         while time.monotonic()<deadline:
             if process.poll() is not None: raise RuntimeError('QEMU terminated before guest readiness')
             if not agent_disabled:
@@ -307,6 +322,9 @@ def qemu_test(folder, disk):
             # A confirmed firmware shell has no guest kernel. Retry once with
             # SeaBIOS on AMD64; keep the same guest assertions and overlay.
             if time.monotonic()-began>45 and serial.exists():
+                size=serial.stat().st_size
+                if size!=serial_size:
+                    serial_size=size;serial_changed=time.monotonic()
                 console=serial.read_text(errors='replace')
                 # OVMF versions format the shell banner differently. Treat
                 # both the banner and its prompt/startup script as proof that
@@ -314,9 +332,10 @@ def qemu_test(folder, disk):
                 firmware_shell = ('UEFI Interactive Shell' in console or
                                   '\nShell>' in console or '\nShell> ' in console or
                                   'startup.nsh' in console and 'Press ' in console)
-                if allow_bios and arch=='amd64' and mode=='UEFI' and firmware_shell:
+                stalled_loader=firmware_without_kernel(console) and time.monotonic()-serial_changed>=90
+                if allow_bios and arch=='amd64' and mode=='UEFI' and (firmware_shell or stalled_loader):
                     retry_reason='bios'
-                    print('UEFI has no boot entry; retrying the legacy image with SeaBIOS')
+                    print('UEFI did not reach a guest kernel; retrying the image with SeaBIOS within the same boot budget')
                     return None
                 if 'Mounting root: failed' in console or 'VFS: Unable to mount root fs' in console:
                     if allow_bios and storage_mode=='virtio':retry_reason='scsi';return None
@@ -330,6 +349,7 @@ def qemu_test(folder, disk):
         print('Last guest readiness error: '+last_error)
         raise RuntimeError('software or hardware VM readiness budget exhausted')
     try:
+        initial_deadline=time.monotonic()+readiness_budget
         start();boot=ready(allow_bios=True)
         for _ in range(3):
             if boot is not None:break
