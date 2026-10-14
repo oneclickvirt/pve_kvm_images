@@ -123,7 +123,7 @@ jobs:
             # Offline edits can leave ld.so.cache unlabeled, preventing even
             # the first-boot relabel service from loading its dependencies.
             # Restore the vendor policy before testing or publishing.
-            sudo timeout --kill-after=30s 45m virt-customize -a rockylinux-${version}.qcow2 --selinux-relabel --delete /.autorelabel
+            bash .github/scripts/relabel_guest_image.sh rockylinux-${version}.qcow2
             echo "Creating backup and finalizing RockyLinux $version image"
             cp rockylinux-${version}.qcow2 rockylinux-${version}.qcow2.bak
             echo "Compressing RockyLinux $version image"

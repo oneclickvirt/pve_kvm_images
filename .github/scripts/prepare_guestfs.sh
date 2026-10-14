@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-sudo apt-get update -y
-sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic isc-dhcp-client dhcpcd-base
+source .github/scripts/ci_network.sh
+ci_retry sudo apt-get update -y
+ci_retry sudo apt-get install -y --no-install-recommends curl wget unzip zip jq libguestfs-tools qemu-utils axel rng-tools linux-image-generic isc-dhcp-client dhcpcd-base policycoreutils
+bash .github/scripts/prepare_selinux_appliance.sh
 if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
 sudo find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -exec chmod a+r {} +
 
