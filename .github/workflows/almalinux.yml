@@ -67,10 +67,11 @@ jobs:
               --run-command "systemctl enable serial-getty@ttyS1.service || true" \
               --append-line "/etc/systemd/timesyncd.conf:NTP=time.apple.com time.windows.com" \
               --run-command "(dnf install -y epel-release --allowerasing || dnf install -y epel-release || true)" \
-              --run-command "dnf install -y curl openssh-server qemu-guest-agent" \
-              --run-command "dnf install -y sudo qemu-guest-agent bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || echo Optional guest utilities were unavailable >&2" \
+              --run-command "dnf install -y curl openssh-server" \
+              --run-command "dnf install -y qemu-guest-agent || echo Optional guest agent was unavailable >&2" \
+              --run-command "dnf install -y sudo bash-completion unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-utils zstd cronie lsof || echo Optional guest utilities were unavailable >&2" \
               --run-command "(dnf install -y spice-vdagent lldpad || true)" \
-              --run-command "systemctl enable qemu-guest-agent" \
+              --run-command "if command -v qemu-ga >/dev/null 2>&1; then systemctl enable qemu-guest-agent; fi" \
               --run-command "dnf -y autoremove && dnf -y clean all || true" \
               --delete "/var/log/*.log" \
               --truncate "/etc/machine-id"; then
@@ -120,6 +121,7 @@ jobs:
             sudo timeout --kill-after=30s 45m virt-customize -a almalinux-${version}.qcow2 --run-command "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
             # 安全加固：禁用algif_aead模块（CVE防护）
             sudo timeout --kill-after=30s 45m virt-customize -a almalinux-${version}.qcow2 --run-command "mkdir -p /etc/modprobe.d && echo 'install algif_aead /bin/false' > /etc/modprobe.d/disable-algif.conf"
+            sudo timeout --kill-after=30s 45m virt-customize -a almalinux-${version}.qcow2 --touch /.autorelabel
             echo "Creating backup and finalizing Almalinux $version image"
             cp almalinux-${version}.qcow2 almalinux-${version}.qcow2.bak
             echo "Compressing Almalinux $version image"

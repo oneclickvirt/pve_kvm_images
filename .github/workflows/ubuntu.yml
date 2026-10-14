@@ -41,7 +41,7 @@ jobs:
         \  fi\n    fi\n    if [ ! -f \"ubuntu-${version}.qcow2\" ] || [ $(stat -c\
         \ %s \"ubuntu-${version}.qcow2\") -lt 10485760 ]; then\n        echo \"Download\
         \ failed or file too small for Ubuntu $version, skipping...\"\n        rm\
-        \ -f ubuntu-${version}.qcow2\n        continue\n    fi\n    chmod 644 ubuntu-${version}.qcow2\n\
+        \ -f ubuntu-${version}.qcow2\n        continue\n    fi\n    chmod 644 ubuntu-${version}.qcow2\n    bash .github/scripts/expand_guest_root.sh ubuntu-${version}.qcow2\n\
         \    # 自定义镜像\n    echo \"Customizing Ubuntu $version image\"\n    \n    #\
         \ 配置阿里云源\n    if [ \"$version\" = \"24.04\" ] || [ \"$version\" = \"24.10\"\
         \ ] || [ \"$version\" = \"25.04\" ]; then\n        timeout --kill-after=30s\

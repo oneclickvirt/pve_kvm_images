@@ -27,7 +27,7 @@ jobs:
         export LIBGUESTFS_BACKEND=direct\ndeclare -A alpine_versions\nalpine_versions[\"\
         3.22\"]=\"3.22\"\nalpine_versions[\"3.21\"]=\"3.21\"\nalpine_versions[\"3.20\"\
         ]=\"3.20\"\ndownload_alpine_image() {\n    python3 .github/scripts/download_alpine_image.py\
-        \ \"$1\" \"$2\"\n}\n\nimage_versions=(3.22 3.21 3.20)\nexpected_images=${#image_versions[@]}\n\
+        \ \"$1\" \"$2\"\n}\n\nimage_versions=(3.22 3.21)\nexpected_images=${#image_versions[@]}\n\
         for version in \"${image_versions[@]}\"; do\n    echo \"=== Processing Alpine\
         \ $version ===\"\n    rm -f alpine-${version}.qcow2 alpine-${version}-custom.qcow2\
         \ alpine${version}.qcow2\n    \n    echo \"Downloading Alpine $version Cloud\
