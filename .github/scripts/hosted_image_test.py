@@ -20,7 +20,7 @@ import fcntl
 import ipaddress
 
 CHECK = """set -eu
-test -s /etc/os-release || test -s /usr/lib/os-release || test -s /etc/alpine-release || test -s /etc/openwrt_release || { echo 'Missing guest OS identity' >&2; exit 1; }
+test -s /etc/os-release || test -s /usr/lib/os-release || test -s /etc/alpine-release || test -s /etc/openwrt_release || test -s /etc/redhat-release || test -s /etc/lsb-release || { echo 'Missing guest OS identity' >&2; exit 1; }
 awk '$2 ~ /:0016$/ && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp /proc/net/tcp6 || { echo 'Guest SSH port 22 is not listening' >&2; exit 1; }
 https_check() {
   for url in https://github.com https://deb.debian.org; do
@@ -201,11 +201,14 @@ def qemu_test(folder, disk, provision_key=False):
              '-machine','virt' if arch=='arm64' else 'q35','-accel','kvm' if accelerated else 'tcg,thread=multi',
              '-cpu','host' if accelerated else 'max','-m','2048','-smp','2',
              '-display','none','-serial',f'file:{serial}','-monitor',f'unix:{monitor},server=on,wait=off',
-             '-drive',f'file={overlay},format=qcow2,if=virtio','-drive',f'file={seed},format=raw,if=virtio',
-             '-netdev',f'user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22','-device','virtio-net-pci,netdev=net0',
+             '-drive',f'file={overlay},format=qcow2,if=none,id=guestdisk','-drive',f'file={seed},format=raw,if=virtio',
+             '-netdev',f'user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22',
              '-device','virtio-serial-pci','-chardev',f'socket,path={sock},server=on,wait=off,id=qga',
              '-device','virtserialport,chardev=qga,name=org.qemu.guest_agent.0']
-    log=(folder/'qemu.log').open('wb');process=None;mode='UEFI';transport='QGA';ssh_password=None
+    for bus in range(1,6):
+        command+=['-device',f'pcie-root-port,id=hosted-port{bus},chassis={bus},bus=pcie.0,addr={bus+15:#x}']
+    command+=['-device','virtio-net-pci,netdev=net0,bus=hosted-port5,addr=0']
+    log=(folder/'qemu.log').open('wb');process=None;mode='UEFI';storage_mode='virtio';retry_reason=None;transport='QGA';ssh_password=None
     repository=os.environ.get('GITHUB_REPOSITORY','')
     legacy_password='oneclickvirt' if repository.endswith('/pve_kvm_images') else 'password' if repository.endswith('/kvm_images') else None
     def stop():
@@ -213,13 +216,17 @@ def qemu_test(folder, disk, provision_key=False):
             process.terminate()
             try:process.wait(timeout=30)
             except subprocess.TimeoutExpired:process.kill();process.wait()
-    def start(bios=False):
-        nonlocal process,mode
+    def start(bios=False,storage="virtio"):
+        nonlocal process,mode,storage_mode
         for path in [serial,sock,monitor]:path.unlink(missing_ok=True)
         mode='BIOS' if bios else 'UEFI'
-        process=subprocess.Popen(command+([] if bios else firmware(arch,folder)),stdout=log,stderr=log)
+        storage_mode=storage
+        devices=['-device','virtio-blk-pci,drive=guestdisk,bootindex=1']
+        if storage=='scsi':devices=['-device','virtio-scsi-pci,id=guest-scsi','-device','scsi-hd,drive=guestdisk,bus=guest-scsi.0,bootindex=1']
+        if storage=='sata':devices=['-device','ide-hd,drive=guestdisk,bus=ide.0,bootindex=1']
+        process=subprocess.Popen([command[0]]+devices+command[1:]+([] if bios else firmware(arch,folder)),stdout=log,stderr=log)
     def ready(previous=None, allow_bios=False):
-        nonlocal transport,ssh_password
+        nonlocal transport,ssh_password,retry_reason
         deadline=time.monotonic()+(1500 if not accelerated else 600)
         last_error='guest execution unavailable';agent_disabled=False
         began=time.monotonic()
@@ -240,19 +247,32 @@ def qemu_test(folder, disk, provision_key=False):
                 except (subprocess.SubprocessError,OSError) as error:last_error=type(error).__name__
             # A confirmed firmware shell has no guest kernel. Retry once with
             # SeaBIOS on AMD64; keep the same guest assertions and overlay.
-            if allow_bios and arch=='amd64' and time.monotonic()-began>45 and serial.exists():
-                if 'UEFI Interactive Shell' in serial.read_text(errors='replace'):
+            if time.monotonic()-began>45 and serial.exists():
+                console=serial.read_text(errors='replace')
+                if allow_bios and arch=='amd64' and mode=='UEFI' and 'UEFI Interactive Shell' in console:
+                    retry_reason='bios'
                     print('UEFI has no boot entry; retrying the legacy image with SeaBIOS')
                     return None
+                if 'Mounting root: failed' in console or 'VFS: Unable to mount root fs' in console:
+                    if allow_bios and storage_mode=='virtio':retry_reason='scsi';return None
+                    if allow_bios and arch=='amd64' and storage_mode=='scsi':retry_reason='sata';return None
+                    print(console[-12000:])
+                    raise RuntimeError('guest kernel cannot mount its root filesystem with compatible storage controllers')
             time.sleep(5)
-        if serial.exists():print(serial.read_text(errors='replace')[-12000:])
+        if serial.exists():
+            console=serial.read_text(errors='replace');print(console[:4000]+'\n...\n'+console[-12000:])
         print((folder/'qemu.log').read_text(errors='replace')[-3000:])
         print('Last guest readiness error: '+last_error)
         raise RuntimeError('software or hardware VM readiness budget exhausted')
     try:
         start();boot=ready(allow_bios=True)
-        if boot is None:
-            stop();start(bios=True);boot=ready()
+        for _ in range(3):
+            if boot is not None:break
+            next_bios=mode=='BIOS' or retry_reason=='bios'
+            next_storage=storage_mode if retry_reason=='bios' else retry_reason
+            print('Retrying compatible VM boot: '+('BIOS' if next_bios else 'UEFI')+' '+next_storage)
+            stop();start(bios=next_bios,storage=next_storage);boot=ready(allow_bios=True)
+        if boot is None:raise RuntimeError('VM compatibility retry budget exhausted')
         if transport=='SSH':
             # reboot commonly disconnects SSH before returning a status.
             # The changed kernel boot_id is the success condition.
@@ -262,7 +282,7 @@ def qemu_test(folder, disk, provision_key=False):
         else:
             qga_command(sock,'guest-shutdown',{'mode':'reboot'},expect_response=False)
         time.sleep(15);ready(boot)
-        print('Runtime validation: QEMU '+('KVM' if accelerated else 'TCG')+' '+mode+' '+transport+' guest execution, SSH listener, network and reboot passed')
+        print('Runtime validation: QEMU '+('KVM' if accelerated else 'TCG')+' '+mode+' '+storage_mode+' '+transport+' guest execution, SSH listener, network and reboot passed')
     finally:
         stop()
         log.close()
