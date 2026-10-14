@@ -29,6 +29,15 @@ def run(args, **kwargs):
     return subprocess.run(args, check=True, timeout=kwargs.pop('timeout', 120), **kwargs)
 
 
+def kvm_available():
+    try:
+        with open('/dev/kvm','rb') as kvm:
+            vmfd=fcntl.ioctl(kvm,0xAE01,0)
+            os.close(vmfd)
+        return True
+    except OSError:return False
+
+
 def native_test(folder, metadata, rootfs, vm=False, cli='incus'):
     alias='image-'+uuid.uuid4().hex[:12]; name='test-'+uuid.uuid4().hex[:12]
     prefix=['sudo', cli]
@@ -124,12 +133,7 @@ def firmware(arch, folder):
 
 def qemu_test(folder, disk, console_only=False):
     arch='arm64' if os.uname().machine=='aarch64' else 'amd64'
-    accelerated=False
-    try:
-        with open('/dev/kvm','rb') as kvm:
-            vmfd=fcntl.ioctl(kvm,0xAE01,0)
-            os.close(vmfd);accelerated=True
-    except OSError:pass
+    accelerated=kvm_available()
     overlay=folder/'validation-overlay.qcow2'
     run(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(disk.resolve()),str(overlay)])
     info=json.loads(run(['qemu-img','info','--output=json',str(disk)],capture_output=True,text=True).stdout)
@@ -221,7 +225,7 @@ def unpack(path, folder, runtime):
         value+='templates:\n'
         for target,(name,content) in templates.items():
             value+=f'  {target}:\n    when: [create]\n    template: {name}\n'
-    elif path.name.endswith('.tar.zst'):
+    elif path.name.endswith('.tar.zst') or os.environ.get('GITHUB_REPOSITORY')=='oneclickvirt/pve_lxc_images':
         # Proxmox templates intentionally contain static placeholder network
         # data. Proxmox replaces it when creating a guest. Apply the equivalent
         # DHCP provisioning on this disposable Incus test host.
@@ -248,7 +252,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='hosted-image-',dir=os.environ.get('RUNNER_TEMP')) as temporary:
         folder=Path(temporary);metadata,rootfs=unpack(args.file,folder,args.runtime)
         vm=rootfs.name.endswith('.qcow2')
-        if args.runtime=='qemu' or (vm and not Path('/dev/kvm').exists()):
+        if args.runtime=='qemu' or (vm and not kvm_available()):
             qemu_test(folder,rootfs,console_only=metadata is not None)
         else:
             native_test(folder,metadata,rootfs,vm=vm,cli='/snap/bin/lxc' if args.runtime=='lxd' else 'incus')
