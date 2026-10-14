@@ -17,11 +17,27 @@ import time
 import uuid
 import zipfile
 import fcntl
+import ipaddress
 
 CHECK = """set -eu
 test -s /etc/os-release || test -s /usr/lib/os-release || test -s /etc/alpine-release || test -s /etc/openwrt_release || { echo 'Missing guest OS identity' >&2; exit 1; }
 awk '$2 ~ /:0016$/ && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp /proc/net/tcp6 || { echo 'Guest SSH port 22 is not listening' >&2; exit 1; }
-curl -fLsS --connect-timeout 10 --max-time 30 https://github.com -o /dev/null || { echo 'Guest HTTPS/DNS network check failed' >&2; exit 1; }
+https_check() {
+  for url in https://github.com https://deb.debian.org; do
+    if command -v curl >/dev/null 2>&1; then
+      curl -fLsS --connect-timeout 5 --max-time 15 "$url" -o /dev/null && return 0
+    elif command -v uclient-fetch >/dev/null 2>&1; then
+      uclient-fetch -T 15 -O /dev/null "$url" && return 0
+    elif command -v wget >/dev/null 2>&1 && wget --version 2>/dev/null | grep -q 'GNU Wget'; then
+      wget --https-only --timeout=15 --tries=1 -q -O /dev/null "$url" && return 0
+    else
+      echo 'No HTTPS client with certificate verification is available' >&2
+      return 1
+    fi
+  done
+  return 1
+}
+https_check || { echo 'Guest HTTPS/DNS network check failed' >&2; exit 1; }
 cat /proc/sys/kernel/random/boot_id
 """
 
@@ -65,6 +81,10 @@ def native_test(folder, metadata, rootfs, vm=False, cli='incus'):
         command=prefix+['init',alias,name,'-c','limits.memory=1GiB']
         if vm: command+=['--vm','-c','security.secureboot=false']
         run(command)
+        if metadata.name=='metadata.tar.xz':
+            address=run(prefix+['network','get','imagebr0','ipv4.address'],capture_output=True,text=True).stdout.strip()
+            gateway=str(ipaddress.IPv4Interface(address).ip)
+            run(prefix+['config','set',name,'user.hosted_dns',gateway])
         # Older images have init systems that need nesting for their own mount units.
         if not vm: run(prefix+['config','set',name,'security.nesting','true'])
         run(prefix+['start',name],timeout=180)
@@ -162,13 +182,15 @@ def qemu_test(folder, disk, provision_key=False):
     meta.write_text('instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n')
     network.write_text('version: 2\nethernets:\n  hosted:\n    match:\n      name: "e*"\n    dhcp4: true\n')
     run(['cloud-localds','--network-config='+str(network),str(seed),str(user),str(meta)])
+    consumer_password=None
     if provision_key:
         # Supply the consumer's login key on the disposable overlay. Do not
         # install packages, enable missing SSH/network services or change QGA
         # policy: the original image still has to provide those capabilities.
         try:
+            consumer_password=secrets.token_urlsafe(32)
             run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
-                 '--root-password','password:'+secrets.token_urlsafe(32),'--no-network'],capture_output=True,timeout=600,
+                 '--root-password','password:'+consumer_password,'--no-network'],capture_output=True,timeout=600,
                 env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
         except subprocess.CalledProcessError:
             raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
@@ -210,7 +232,7 @@ def qemu_test(folder, disk, provision_key=False):
                 except (OSError,RuntimeError,TimeoutError,ValueError) as error:
                     last_error=str(error)[-1500:]
                     agent_disabled='guest-exec' in last_error and ('disabled' in last_error or 'not found' in last_error)
-            for password in [None]+([legacy_password] if legacy_password else []):
+            for password in [None]+([consumer_password] if consumer_password else [])+([legacy_password] if legacy_password else []):
                 try:
                     boot=ssh_command(port,key,CHECK,password)
                     if boot and boot!=previous:transport='SSH';ssh_password=password;return boot
@@ -273,10 +295,7 @@ def unpack(path, folder, runtime):
         # the NoCloud instance/network data a real consumer must provision.
         templates={'/var/lib/cloud/seed/nocloud-net/meta-data':('meta-data.tpl','instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n'),
                    '/var/lib/cloud/seed/nocloud-net/user-data':('user-data.tpl','#cloud-config\nssh_pwauth: true\ndisable_root: false\n'),
-                   '/var/lib/cloud/seed/nocloud-net/network-config':('network-config.tpl','version: 2\nethernets:\n  eth0:\n    dhcp4: true\n')}
-        value+='templates:\n'
-        for target,(name,content) in templates.items():
-            value+=f'  {target}:\n    when: [create]\n    template: {name}\n'
+                   '/var/lib/cloud/seed/nocloud-net/network-config':('network-config.tpl','version: 2\nethernets:\n  eth0:\n    dhcp4: true\n    nameservers:\n      addresses: [{{ config_get("user.hosted_dns", "") }}]\n')}
     elif path.name.endswith('.tar.zst') or os.environ.get('GITHUB_REPOSITORY')=='oneclickvirt/pve_lxc_images':
         # Proxmox templates intentionally contain static placeholder network
         # data. Proxmox replaces it when creating a guest. Apply the equivalent
@@ -284,10 +303,14 @@ def unpack(path, folder, runtime):
         templates={'/etc/network/interfaces':('interfaces.tpl','auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n'),
                    '/etc/sysconfig/network-scripts/ifcfg-eth0':('ifcfg.tpl','DEVICE=eth0\nBOOTPROTO=dhcp\nONBOOT=yes\nTYPE=Ethernet\n'),
                    '/etc/systemd/network/10-hosted-eth0.network':('network.tpl','[Match]\nName=eth0\n[Network]\nDHCP=yes\n')}
-        value+='templates:\n'
-        for target,(name,content) in templates.items():
-            value+=f'  {target}:\n    when: [create]\n    template: {name}\n'
         print('Provisioning legacy Proxmox template network for the disposable test guest')
+    # Raw LXC/PVE archives require consumer-provided DNS, just as pct create
+    # supplies nameserver settings. Use the disposable bridge DNS, never the
+    # host's loopback stub resolver, and retain this provisioning after restart.
+    templates['/etc/resolv.conf']=('resolv.conf.tpl','nameserver {{ config_get("user.hosted_dns", "") }}\n')
+    value+='templates:\n'
+    for target,(name,content) in templates.items():
+        value+=f'  {target}:\n    when: [create]\n    template: {name}\n'
     value=value.encode()
     with tarfile.open(metadata,'w:xz') as archive:
         info=tarfile.TarInfo('metadata.yaml');info.size=len(value);archive.addfile(info,io.BytesIO(value))

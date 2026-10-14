@@ -46,6 +46,21 @@ class GuestAgentTests(unittest.TestCase):
     def test_shutdown_does_not_expect_a_reply(self):
         self.assertIsNone(self.exchange(lambda client,request:None,expect_response=False))
 
+    def test_raw_rootfs_receives_consumer_dns_including_cloud_seed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary)
+            for variant in ['default','cloud']:
+                rootfs=folder/('debian_13_trixie_amd64_'+variant+'.tar.xz');rootfs.touch()
+                metadata,_=runtime.unpack(rootfs,folder,'incus')
+                with tarfile.open(metadata) as archive:
+                    dns=archive.extractfile('templates/resolv.conf.tpl').read().decode()
+                    self.assertIn('user.hosted_dns',dns)
+                    self.assertNotIn('127.0.0.53',dns)
+                    if variant=='cloud':
+                        seed=archive.extractfile('templates/network-config.tpl').read().decode()
+                        self.assertIn('nameservers:',seed)
+                        self.assertIn('user.hosted_dns',seed)
+
     def test_cloud_rootfs_receives_consumer_seed(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder=Path(temporary);rootfs=folder/'debian_13_trixie_amd64_cloud.tar.xz';rootfs.touch()
