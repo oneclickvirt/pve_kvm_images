@@ -18,9 +18,9 @@ import zipfile
 import fcntl
 
 CHECK = """set -eu
-test -s /etc/os-release || test -s /usr/lib/os-release || test -s /etc/alpine-release || test -s /etc/openwrt_release
-awk '$2 ~ /:0016$/ && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp /proc/net/tcp6
-curl -fLsS --connect-timeout 10 --max-time 30 https://github.com -o /dev/null
+test -s /etc/os-release || test -s /usr/lib/os-release || test -s /etc/alpine-release || test -s /etc/openwrt_release || { echo 'Missing guest OS identity' >&2; exit 1; }
+awk '$2 ~ /:0016$/ && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp /proc/net/tcp6 || { echo 'Guest SSH port 22 is not listening' >&2; exit 1; }
+curl -fLsS --connect-timeout 10 --max-time 30 https://github.com -o /dev/null || { echo 'Guest HTTPS/DNS network check failed' >&2; exit 1; }
 cat /proc/sys/kernel/random/boot_id
 """
 
@@ -37,13 +37,18 @@ def native_test(folder, metadata, rootfs, vm=False, cli='incus'):
         return result.stdout.strip()
     def ready(previous=None):
         deadline=time.monotonic()+(600 if vm else 180)
+        last_error='guest execution unavailable'
         while time.monotonic()<deadline:
             try:
                 boot=execute(CHECK)
                 if boot and boot!=previous: return boot
-            except (subprocess.SubprocessError,OSError): pass
+            except subprocess.CalledProcessError as error:
+                last_error=(error.stderr or str(error))[-1500:]
+            except (subprocess.SubprocessError,OSError) as error:
+                last_error=type(error).__name__
             time.sleep(5)
         subprocess.run(prefix+['info',name,'--show-log'],timeout=30)
+        print('Last guest readiness error: '+last_error)
         raise RuntimeError('guest boot, SSH listener or external network check timed out')
     try:
         run(prefix+['image','import',str(metadata),str(rootfs),'--alias',alias],timeout=180)
@@ -62,18 +67,30 @@ def native_test(folder, metadata, rootfs, vm=False, cli='incus'):
         subprocess.run(prefix+['image','delete',alias],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=60)
 
 
-def qga_command(sock, command, arguments=None):
+def qga_command(sock, command, arguments=None, expect_response=True):
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as stream:
         stream.settimeout(10);stream.connect(str(sock))
-        stream.sendall((json.dumps({'execute':command,'arguments':arguments or {}})+'\n').encode())
+        identifier=uuid.uuid4().hex
+        stream.sendall((json.dumps({'execute':command,'arguments':arguments or {},'id':identifier})+'\n').encode())
+        # QGA guest-shutdown deliberately returns no response. Readiness after
+        # the request proves the reboot; a missing response is not a timeout.
+        if not expect_response:return None
         buffer=b''
-        while True:
-            buffer+=stream.recv(65536)
-            if b'\n' not in buffer: continue
-            line,buffer=buffer.split(b'\n',1)
-            value=json.loads(line)
-            if 'error' in value: raise RuntimeError('guest agent rejected command')
-            if 'return' in value: return value['return']
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            stream.settimeout(max(0.001,deadline-time.monotonic()))
+            chunk=stream.recv(65536)
+            if not chunk:raise ConnectionError('guest agent disconnected before its response')
+            buffer+=chunk
+            if len(buffer)>1024*1024:raise ValueError('guest agent response exceeded size limit')
+            while b'\n' in buffer:
+                line,buffer=buffer.split(b'\n',1)
+                if not line.strip():continue
+                value=json.loads(line)
+                if value.get('id')!=identifier:continue
+                if 'error' in value:raise RuntimeError('guest agent rejected command: '+str(value['error'])[:500])
+                if 'return' in value:return value['return']
+        raise TimeoutError('guest agent response budget exhausted')
 
 
 def qga_check(sock):
@@ -82,7 +99,9 @@ def qga_check(sock):
     while time.monotonic()<deadline:
         value=qga_command(sock,'guest-exec-status',{'pid':response['pid']})
         if value.get('exited'):
-            if value.get('exitcode')!=0: raise RuntimeError('guest runtime assertion failed')
+            if value.get('exitcode')!=0:
+                detail=base64.b64decode(value.get('err-data','')).decode(errors='replace')[-1500:]
+                raise RuntimeError('guest runtime assertion failed: '+detail)
             return base64.b64decode(value.get('out-data','')).decode().strip()
         time.sleep(2)
     raise TimeoutError('guest assertion budget exhausted')
@@ -113,7 +132,8 @@ def qemu_test(folder, disk, console_only=False):
     except OSError:pass
     overlay=folder/'validation-overlay.qcow2'
     run(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(disk.resolve()),str(overlay)])
-    run(['qemu-img','resize',str(overlay),'10G'])
+    info=json.loads(run(['qemu-img','info','--output=json',str(disk)],capture_output=True,text=True).stdout)
+    run(['qemu-img','resize',str(overlay),str(max(info['virtual-size'],10*1024**3))])
     seed=folder/'seed.img';user=folder/'user-data';meta=folder/'meta-data'
     user.write_text('#cloud-config\nssh_pwauth: true\ndisable_root: false\n')
     meta.write_text('instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n')
@@ -130,6 +150,7 @@ def qemu_test(folder, disk, console_only=False):
     log=(folder/'qemu.log').open('wb');process=subprocess.Popen(command,stdout=log,stderr=log)
     def ready(previous=None, serial_offset=0):
         deadline=time.monotonic()+(1500 if not accelerated else 600)
+        last_error='guest agent unavailable'
         while time.monotonic()<deadline:
             if process.poll() is not None: raise RuntimeError('QEMU terminated before guest readiness')
             if console_only:
@@ -142,10 +163,11 @@ def qemu_test(folder, disk, console_only=False):
                 try:
                     boot=qga_check(sock)
                     if boot and boot!=previous:return boot
-                except (OSError,RuntimeError,TimeoutError,ValueError):pass
+                except (OSError,RuntimeError,TimeoutError,ValueError) as error:last_error=str(error)[-1500:]
             time.sleep(5)
         if serial.exists():print(serial.read_text(errors='replace')[-12000:])
         print((folder/'qemu.log').read_text(errors='replace')[-3000:])
+        print('Last guest readiness error: '+last_error)
         raise RuntimeError('software or hardware VM readiness budget exhausted')
     try:
         boot=ready()
@@ -159,7 +181,7 @@ def qemu_test(folder, disk, console_only=False):
             # This is explicitly recorded as console coverage, not SSH validation.
             print('Runtime validation: QEMU '+('KVM' if accelerated else 'TCG')+' kernel/rootfs console boot and reset passed; guest execution was not validated')
         else:
-            qga_command(sock,'guest-shutdown',{'mode':'reboot'});time.sleep(15);ready(boot)
+            qga_command(sock,'guest-shutdown',{'mode':'reboot'},expect_response=False);time.sleep(15);ready(boot)
             print('Runtime validation: QEMU '+('KVM' if accelerated else 'TCG')+' guest agent, SSH listener, network and reboot passed')
     finally:
         process.terminate()
@@ -188,9 +210,33 @@ def unpack(path, folder, runtime):
     if not path.name.endswith(('.tar.xz','.tar.zst')):raise ValueError('unknown image format')
     arch='aarch64' if os.uname().machine=='aarch64' else 'x86_64'
     metadata=folder/'metadata.tar.xz'
-    value=f'architecture: {arch}\ncreation_date: {int(time.time())}\nproperties:\n  description: Hosted validation of public LXC rootfs\n'.encode()
+    value=f'architecture: {arch}\ncreation_date: {int(time.time())}\nproperties:\n  description: Hosted validation of public LXC rootfs\n'
+    templates={}
+    if '_cloud.' in path.name:
+        # Raw LXC/PVE rootfs has no Incus cloud-init template manifest. Supply
+        # the NoCloud instance/network data a real consumer must provision.
+        templates={'/var/lib/cloud/seed/nocloud-net/meta-data':('meta-data.tpl','instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n'),
+                   '/var/lib/cloud/seed/nocloud-net/user-data':('user-data.tpl','#cloud-config\nssh_pwauth: true\ndisable_root: false\n'),
+                   '/var/lib/cloud/seed/nocloud-net/network-config':('network-config.tpl','version: 2\nethernets:\n  eth0:\n    dhcp4: true\n')}
+        value+='templates:\n'
+        for target,(name,content) in templates.items():
+            value+=f'  {target}:\n    when: [create]\n    template: {name}\n'
+    elif path.name.endswith('.tar.zst'):
+        # Proxmox templates intentionally contain static placeholder network
+        # data. Proxmox replaces it when creating a guest. Apply the equivalent
+        # DHCP provisioning on this disposable Incus test host.
+        templates={'/etc/network/interfaces':('interfaces.tpl','auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n'),
+                   '/etc/sysconfig/network-scripts/ifcfg-eth0':('ifcfg.tpl','DEVICE=eth0\nBOOTPROTO=dhcp\nONBOOT=yes\nTYPE=Ethernet\n'),
+                   '/etc/systemd/network/10-hosted-eth0.network':('network.tpl','[Match]\nName=eth0\n[Network]\nDHCP=yes\n')}
+        value+='templates:\n'
+        for target,(name,content) in templates.items():
+            value+=f'  {target}:\n    when: [create]\n    template: {name}\n'
+        print('Provisioning legacy Proxmox template network for the disposable test guest')
+    value=value.encode()
     with tarfile.open(metadata,'w:xz') as archive:
         info=tarfile.TarInfo('metadata.yaml');info.size=len(value);archive.addfile(info,io.BytesIO(value))
+        for name,content in templates.values():
+            data=content.encode();info=tarfile.TarInfo('templates/'+name);info.size=len(data);archive.addfile(info,io.BytesIO(data))
     return metadata,path
 
 
