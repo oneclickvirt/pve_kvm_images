@@ -295,7 +295,7 @@ def qemu_test(folder, disk):
     try:
         consumer_password=secrets.token_urlsafe(32)
         run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
-             '--root-password','password:'+consumer_password,'--no-network'],capture_output=True,timeout=600,
+             '--root-password','password:'+consumer_password,'--selinux-relabel','--no-network'],capture_output=True,timeout=600,
             env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
     except subprocess.CalledProcessError:
         raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
