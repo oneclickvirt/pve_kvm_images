@@ -238,6 +238,43 @@ def qemu_network_device():
     return ['-device',f'virtio-net-pci,netdev=net0,mac={HOSTED_NIC_MAC},bus=hosted-port5,addr=0']
 
 
+def qemu_host_diagnostics(monitor):
+    # Read-only HMP commands expose runtime state, never guest memory.
+    for command in ['info status', 'info cpus', 'info block']:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+                stream.settimeout(5)
+                stream.connect(str(monitor))
+                stream.sendall((command + '\n').encode())
+                chunks = []
+                limit = 16384
+                deadline = time.monotonic() + 5
+                while limit > 0 and time.monotonic() < deadline:
+                    stream.settimeout(max(0.001, deadline - time.monotonic()))
+                    chunk = stream.recv(min(4096, limit))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    limit -= len(chunk)
+                    data = b''.join(chunks)
+                    # The first prompt is the greeting; await the reply prompt.
+                    if data.count(b'(qemu)') >= 2:
+                        break
+                detail = b''.join(chunks).decode(errors='replace')
+                if detail:
+                    print('QEMU '+command+' diagnostics:\n'+detail[-8000:], file=sys.stderr)
+        except (OSError, socket.timeout) as error:
+            print('QEMU '+command+' diagnostics unavailable: '+type(error).__name__, file=sys.stderr)
+
+
+def qemu_entropy_devices():
+    # EL initramfs can block waiting for CRNG initialization on a new VM,
+    # particularly under ARM TCG. Supply real host entropy through virtio,
+    # as native Incus/LXD already do, rather than weakening guest randomness.
+    return ['-object', 'rng-random,id=hosted-rng,filename=/dev/urandom',
+            '-device', 'virtio-rng-pci,rng=hosted-rng,max-bytes=1024,period=1000']
+
+
 def qemu_test(folder, disk):
     arch='arm64' if os.uname().machine=='aarch64' else 'amd64'
     accelerated=kvm_available()
@@ -273,6 +310,7 @@ def qemu_test(folder, disk):
              '-netdev',f'user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22',
              '-device','virtio-serial-pci','-chardev',f'socket,path={sock},server=on,wait=off,id=qga',
              '-device','virtserialport,chardev=qga,name=org.qemu.guest_agent.0']
+    command += qemu_entropy_devices()
     for bus in range(1,6):
         command+=['-device',f'pcie-root-port,id=hosted-port{bus},chassis={bus},bus=pcie.0,addr={bus+15:#x}']
     command+=qemu_network_device()
@@ -344,7 +382,8 @@ def qemu_test(folder, disk):
                     raise RuntimeError('guest kernel cannot mount its root filesystem with compatible storage controllers')
             time.sleep(5)
         if serial.exists():
-            console=serial.read_text(errors='replace');print(console[:4000]+'\n...\n'+console[-12000:])
+            console=serial.read_text(errors='replace');print(console if len(console)<=131072 else console[:8192]+'\n...\n'+console[-122880:])
+        qemu_host_diagnostics(monitor)
         print((folder/'qemu.log').read_text(errors='replace')[-3000:])
         print('Last guest readiness error: '+last_error)
         raise RuntimeError('software or hardware VM readiness budget exhausted')

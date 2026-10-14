@@ -120,6 +120,40 @@ class QEMUNetworkTests(unittest.TestCase):
         self.assertNotIn('name: eth0',config)
 
 
+class QEMUDiagnosticTests(unittest.TestCase):
+    def test_missing_monitor_diagnostics_are_bounded_and_do_not_raise(self):
+        output = io.StringIO()
+        with redirect_stderr(output):
+            runtime.qemu_host_diagnostics(Path('/nonexistent-hosted-fixture/monitor.sock'))
+        self.assertEqual(output.getvalue().count('diagnostics unavailable:'), 3)
+        self.assertLess(len(output.getvalue()), 400)
+
+    def test_monitor_commands_are_read_only_and_handle_split_prompts(self):
+        replies = [b'QEMU monitor\n(qemu) ', b'VM status: running\n(qemu) ']
+        stream = mock.Mock()
+        stream.recv.side_effect = replies * 3
+        stream.__enter__ = mock.Mock(return_value=stream)
+        stream.__exit__ = mock.Mock(return_value=False)
+        output = io.StringIO()
+        with mock.patch.object(runtime.socket, 'socket', return_value=stream), redirect_stderr(output):
+            runtime.qemu_host_diagnostics(Path('/tmp/fixture-monitor'))
+        self.assertEqual([call.args[0] for call in stream.sendall.call_args_list],
+                         [b'info status\n', b'info cpus\n', b'info block\n'])
+        self.assertEqual(output.getvalue().count('VM status: running'), 3)
+        self.assertLess(len(output.getvalue()), 400)
+
+
+class QEMUEntropyTests(unittest.TestCase):
+    def test_early_boot_has_a_bounded_virtio_entropy_source(self):
+        arguments = runtime.qemu_entropy_devices()
+        self.assertEqual(arguments[0], '-object')
+        self.assertIn('filename=/dev/urandom', arguments[1])
+        self.assertEqual(arguments[2], '-device')
+        self.assertIn('virtio-rng-pci', arguments[3])
+        self.assertIn('max-bytes=1024', arguments[3])
+        self.assertIn('period=1000', arguments[3])
+
+
 class FirmwareFallbackTests(unittest.TestCase):
     def test_prior_kernel_does_not_hide_a_stalled_efi_loader_after_relabel_reboot(self):
         console = ('BdsDxe: starting Boot0001 "UEFI Misc Device"\n'
