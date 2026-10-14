@@ -11,6 +11,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -18,6 +19,8 @@ import uuid
 import zipfile
 import fcntl
 import ipaddress
+
+HOSTED_NIC_MAC='52:54:00:12:34:56'
 
 CHECK = """set -eu
 test -s /etc/os-release || test -s /usr/lib/os-release || test -s /etc/alpine-release || test -s /etc/openwrt_release || test -s /etc/redhat-release || test -s /etc/lsb-release || { echo 'Missing guest OS identity' >&2; exit 1; }
@@ -37,13 +40,43 @@ https_check() {
   done
   return 1
 }
-https_check || { echo 'Guest HTTPS/DNS network check failed' >&2; exit 1; }
+network_recovery() {
+  command -v ip >/dev/null 2>&1 || return 0
+  interface=$(ip -o route show default 2>/dev/null | awk 'NR == 1 {for (i=1;i<=NF;i++) if ($i == "dev") {print $(i+1); exit}}')
+  if [ -z "$interface" ]; then
+    interface=$(ip -o link show | awk -F': ' '$2 != "lo" {sub(/@.*/, "", $2); print $2; exit}')
+  fi
+  [ -n "$interface" ] || return 0
+  if command -v dhclient >/dev/null 2>&1; then
+    if command -v timeout >/dev/null 2>&1; then timeout 20 dhclient -1 "$interface" >/dev/null 2>&1 || true
+    else dhclient -1 "$interface" >/dev/null 2>&1 || true; fi
+  elif command -v udhcpc >/dev/null 2>&1; then
+    udhcpc -n -q -t 3 -T 3 -i "$interface" >/dev/null 2>&1 || true
+  elif command -v dhcpcd >/dev/null 2>&1; then
+    if command -v timeout >/dev/null 2>&1; then timeout 20 dhcpcd -n "$interface" >/dev/null 2>&1 || true
+    else dhcpcd -n "$interface" >/dev/null 2>&1 || true; fi
+  fi
+}
+if ! https_check; then
+  network_recovery
+  https_check || { echo 'Guest HTTPS/DNS network check failed' >&2; exit 1; }
+fi
 cat /proc/sys/kernel/random/boot_id
 """
 
 
+def isolated_environment(overrides=None):
+    environment=os.environ.copy()
+    if overrides is not None:
+        environment.update(overrides)
+    environment.pop('GH_TOKEN',None)
+    environment.pop('GITHUB_TOKEN',None)
+    return environment
+
+
 def run(args, **kwargs):
-    return subprocess.run(args, check=True, timeout=kwargs.pop('timeout', 120), **kwargs)
+    environment=isolated_environment(kwargs.pop('env',None))
+    return subprocess.run(args, check=True, timeout=kwargs.pop('timeout', 120), env=environment, **kwargs)
 
 
 def kvm_available():
@@ -73,7 +106,7 @@ def native_test(folder, metadata, rootfs, vm=False, cli='incus'):
             except (subprocess.SubprocessError,OSError) as error:
                 last_error=type(error).__name__
             time.sleep(5)
-        subprocess.run(prefix+['info',name,'--show-log'],timeout=30)
+        subprocess.run(prefix+['info',name,'--show-log'],timeout=30,env=isolated_environment())
         print('Last guest readiness error: '+last_error)
         raise RuntimeError('guest boot, SSH listener or external network check timed out')
     try:
@@ -87,14 +120,34 @@ def native_test(folder, metadata, rootfs, vm=False, cli='incus'):
             run(prefix+['config','set',name,'user.hosted_dns',gateway])
         # Older images have init systems that need nesting for their own mount units.
         if not vm: run(prefix+['config','set',name,'security.nesting','true'])
-        run(prefix+['start',name],timeout=180)
+        try:
+            run(prefix+['start',name],timeout=180)
+        except (subprocess.CalledProcessError,subprocess.TimeoutExpired) as error:
+            start_output='\n'.join(part for part in [getattr(error,'stdout',None),getattr(error,'stderr',None)] if part).strip()
+            if start_output:
+                print('Incus start output:\n'+start_output[-2000:],file=sys.stderr)
+            try:
+                diagnostic=subprocess.run(prefix+['info',name,'--show-log'],capture_output=True,
+                                           text=True,timeout=30,check=False,env=isolated_environment())
+                details='\n'.join(part for part in [diagnostic.stdout,diagnostic.stderr] if part).strip()
+                if details:
+                    print('Incus instance diagnostics:\n'+details[-6000:],file=sys.stderr)
+                elif diagnostic.returncode:
+                    print('Incus instance diagnostics unavailable (exit '+str(diagnostic.returncode)+')',file=sys.stderr)
+            except (OSError,subprocess.SubprocessError) as diagnostic_error:
+                print('Incus instance diagnostics unavailable: '+type(diagnostic_error).__name__,file=sys.stderr)
+            raise
         boot=ready()
         run(prefix+['restart',name,'--force'],timeout=180)
         ready(boot)
         print('Runtime validation: native '+('VM' if vm else 'container')+' boot, SSH listener, network and restart passed')
     finally:
-        subprocess.run(prefix+['delete',name,'--force'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=60)
-        subprocess.run(prefix+['image','delete',alias],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=60)
+        for command in [prefix+['delete',name,'--force'],prefix+['image','delete',alias]]:
+            try:
+                subprocess.run(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                               timeout=60,check=False,env=isolated_environment())
+            except (OSError,subprocess.SubprocessError):
+                pass
 
 
 def qga_command(sock, command, arguments=None, expect_response=True):
@@ -167,7 +220,15 @@ def ssh_command(port, key, script, password=None):
     return result.stdout.strip()
 
 
-def qemu_test(folder, disk, provision_key=False):
+def qemu_network_config():
+    return f'version: 2\nethernets:\n  hosted:\n    match:\n      macaddress: {HOSTED_NIC_MAC}\n    dhcp4: true\n'
+
+
+def qemu_network_device():
+    return ['-device',f'virtio-net-pci,netdev=net0,mac={HOSTED_NIC_MAC},bus=hosted-port5,addr=0']
+
+
+def qemu_test(folder, disk):
     arch='arm64' if os.uname().machine=='aarch64' else 'amd64'
     accelerated=kvm_available()
     overlay=folder/'validation-overlay.qcow2'
@@ -180,20 +241,17 @@ def qemu_test(folder, disk, provision_key=False):
     seed=folder/'seed.img';user=folder/'user-data';meta=folder/'meta-data';network=folder/'network-config'
     user.write_text('#cloud-config\nssh_pwauth: false\ndisable_root: false\nusers:\n  - default\n  - name: root\n    lock_passwd: false\n    ssh_authorized_keys:\n      - '+public+'\n')
     meta.write_text('instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n')
-    network.write_text('version: 1\nconfig:\n  - type: physical\n    name: eth0\n    subnets:\n      - type: dhcp\n')
+    network.write_text(qemu_network_config())
     run(['cloud-localds','--network-config='+str(network),str(seed),str(user),str(meta)])
-    consumer_password=None
-    if provision_key:
-        # Supply the consumer's login key on the disposable overlay. Do not
-        # install packages, enable missing SSH/network services or change QGA
-        # policy: the original image still has to provide those capabilities.
-        try:
-            consumer_password=secrets.token_urlsafe(32)
-            run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
-                 '--root-password','password:'+consumer_password,'--no-network'],capture_output=True,timeout=600,
-                env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
-        except subprocess.CalledProcessError:
-            raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
+    # Seed only the temporary overlay so cloud images that ignore the
+    # NoCloud root user entry remain testable without changing the release.
+    try:
+        consumer_password=secrets.token_urlsafe(32)
+        run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
+             '--root-password','password:'+consumer_password,'--no-network'],capture_output=True,timeout=600,
+            env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
+    except subprocess.CalledProcessError:
+        raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
     serial=folder/'serial.log';sock=folder/'guest-agent.sock';monitor=folder/'monitor.sock'
     with socket.socket() as listener:
         listener.bind(('127.0.0.1',0));port=listener.getsockname()[1]
@@ -207,7 +265,7 @@ def qemu_test(folder, disk, provision_key=False):
              '-device','virtserialport,chardev=qga,name=org.qemu.guest_agent.0']
     for bus in range(1,6):
         command+=['-device',f'pcie-root-port,id=hosted-port{bus},chassis={bus},bus=pcie.0,addr={bus+15:#x}']
-    command+=['-device','virtio-net-pci,netdev=net0,bus=hosted-port5,addr=0']
+    command+=qemu_network_device()
     log=(folder/'qemu.log').open('wb');process=None;mode='UEFI';storage_mode='virtio';retry_reason=None;transport='QGA';ssh_password=None
     repository=os.environ.get('GITHUB_REPOSITORY','')
     legacy_password='oneclickvirt' if repository.endswith('/pve_kvm_images') else 'password' if repository.endswith('/kvm_images') else None
@@ -224,7 +282,8 @@ def qemu_test(folder, disk, provision_key=False):
         devices=['-device','virtio-blk-pci,drive=guestdisk,bootindex=1']
         if storage=='scsi':devices=['-device','virtio-scsi-pci,id=guest-scsi','-device','scsi-hd,drive=guestdisk,bus=guest-scsi.0,bootindex=1']
         if storage=='sata':devices=['-device','ide-hd,drive=guestdisk,bus=ide.0,bootindex=1']
-        process=subprocess.Popen([command[0]]+devices+command[1:]+([] if bios else firmware(arch,folder)),stdout=log,stderr=log)
+        process=subprocess.Popen([command[0]]+devices+command[1:]+([] if bios else firmware(arch,folder)),
+                                 stdout=log,stderr=log,env=isolated_environment())
     def ready(previous=None, allow_bios=False):
         nonlocal transport,ssh_password,retry_reason
         deadline=time.monotonic()+(1500 if not accelerated else 600)
@@ -249,7 +308,13 @@ def qemu_test(folder, disk, provision_key=False):
             # SeaBIOS on AMD64; keep the same guest assertions and overlay.
             if time.monotonic()-began>45 and serial.exists():
                 console=serial.read_text(errors='replace')
-                if allow_bios and arch=='amd64' and mode=='UEFI' and 'UEFI Interactive Shell' in console:
+                # OVMF versions format the shell banner differently. Treat
+                # both the banner and its prompt/startup script as proof that
+                # firmware did not find a bootable loader.
+                firmware_shell = ('UEFI Interactive Shell' in console or
+                                  '\nShell>' in console or '\nShell> ' in console or
+                                  'startup.nsh' in console and 'Press ' in console)
+                if allow_bios and arch=='amd64' and mode=='UEFI' and firmware_shell:
                     retry_reason='bios'
                     print('UEFI has no boot entry; retrying the legacy image with SeaBIOS')
                     return None
@@ -348,7 +413,7 @@ def main():
         folder=Path(temporary);metadata,rootfs=unpack(args.file,folder,args.runtime)
         vm=rootfs.name.endswith('.qcow2')
         if args.runtime=='qemu' or (vm and not kvm_available()):
-            qemu_test(folder,rootfs,provision_key=metadata is not None)
+            qemu_test(folder,rootfs)
         else:
             native_test(folder,metadata,rootfs,vm=vm,cli='/snap/bin/lxc' if args.runtime=='lxd' else 'incus')
     print('IMAGE_TEST_RESULT success=true image='+args.file.name)

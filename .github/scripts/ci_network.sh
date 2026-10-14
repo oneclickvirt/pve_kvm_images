@@ -90,7 +90,7 @@ curl() {
   fi
   stdout_file=$(mktemp)
   stderr_file=$(mktemp)
-  if command curl --fail --connect-timeout 15 --max-time 1200 --retry 3 --retry-max-time 180 --retry-connrefused "${curl_args[@]}" >"$stdout_file" 2>"$stderr_file"; then
+  if command curl --fail --connect-timeout 15 --max-time 1200 --retry 3 --retry-all-errors --retry-max-time 180 --retry-connrefused "${curl_args[@]}" >"$stdout_file" 2>"$stderr_file"; then
     cat "$stdout_file"
     cat "$stderr_file" >&2
     rm -f "$stdout_file" "$stderr_file"
@@ -100,7 +100,7 @@ curl() {
   fi
   if [[ -n "$backup" ]]; then
     curl_args[source_index]="$backup"
-    if command curl --fail --connect-timeout 15 --max-time 1200 --retry 3 --retry-max-time 180 --retry-connrefused "${curl_args[@]}" >"$stdout_file" 2>"$stderr_file"; then
+    if command curl --fail --connect-timeout 15 --max-time 1200 --retry 3 --retry-all-errors --retry-max-time 180 --retry-connrefused "${curl_args[@]}" >"$stdout_file" 2>"$stderr_file"; then
       cat "$stdout_file"
       cat "$stderr_file" >&2
       rm -f "$stdout_file" "$stderr_file"

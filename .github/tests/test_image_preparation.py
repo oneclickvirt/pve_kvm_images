@@ -19,14 +19,17 @@ class DebianSourceTests(unittest.TestCase):
         )
         return output
 
-    def test_bullseye_uses_archived_release_metadata(self):
+    def test_bullseye_uses_archived_base_and_security_sources(self):
         output = self.configure("11", "bullseye")
         sources = (output / "debian.sources").read_text()
         self.assertIn("archive.debian.org/debian", sources)
         self.assertIn("Suites: bullseye bullseye-updates", sources)
-        self.assertNotIn("bullseye-security", sources)
+        self.assertIn("URIs: https://archive.debian.org/debian-security", sources)
+        self.assertIn("Suites: bullseye-security", sources)
         self.assertNotIn("non-free-firmware", sources)
-        self.assertIn('Acquire::Check-Valid-Until "false";', (output / "99-archive-no-check").read_text())
+        apt_config = (output / "99-archive-no-check").read_text()
+        self.assertIn('Dir::Etc::sourcelist "/dev/null";', apt_config)
+        self.assertIn('Acquire::Check-Valid-Until "false";', apt_config)
 
     def test_supported_live_releases_keep_security_mirror(self):
         for version, codename in (("12", "bookworm"), ("13", "trixie")):
@@ -36,7 +39,7 @@ class DebianSourceTests(unittest.TestCase):
                 self.assertIn("URIs: https://deb.debian.org/debian", sources)
                 self.assertIn(f"Suites: {codename} {codename}-updates {codename}-backports", sources)
                 self.assertIn(f"Suites: {codename}-security", sources)
-                self.assertEqual("", (output / "99-archive-no-check").read_text())
+                self.assertIn('Dir::Etc::sourcelist "/dev/null";', (output / "99-archive-no-check").read_text())
 
     def test_rejects_unknown_version_pair(self):
         with tempfile.TemporaryDirectory() as output:

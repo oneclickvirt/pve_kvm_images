@@ -1,4 +1,6 @@
 import importlib.util
+from contextlib import redirect_stderr
+import io
 import json
 from pathlib import Path
 import socket
@@ -8,9 +10,21 @@ import threading
 import unittest
 from unittest import mock
 import subprocess
+from types import SimpleNamespace
 
 spec=importlib.util.spec_from_file_location('hosted_runtime',Path(__file__).resolve().parents[1]/'scripts/hosted_image_test.py')
 runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime)
+
+
+class CredentialIsolationTests(unittest.TestCase):
+    def test_child_commands_do_not_inherit_github_tokens(self):
+        with mock.patch.dict(runtime.os.environ, {'GH_TOKEN':'secret-a','GITHUB_TOKEN':'secret-b'}), \
+             mock.patch.object(runtime.subprocess,'run') as execute:
+            runtime.run(['fixture'],env={'GH_TOKEN':'override','PRESERVED':'yes'})
+        environment=execute.call_args.kwargs['env']
+        self.assertNotIn('GH_TOKEN',environment)
+        self.assertNotIn('GITHUB_TOKEN',environment)
+        self.assertEqual(environment['PRESERVED'],'yes')
 
 
 class GuestAgentTests(unittest.TestCase):
@@ -86,5 +100,60 @@ class SSHTransportTests(unittest.TestCase):
         with mock.patch.object(runtime, 'run', side_effect=subprocess.CalledProcessError(1, ['ssh'], stderr='network failed')):
             with self.assertRaises(subprocess.CalledProcessError):
                 runtime.ssh_command(22022, Path('/tmp/key'), runtime.CHECK)
+
+class QEMUNetworkTests(unittest.TestCase):
+    def test_qemu_runtime_installs_guestfs_before_returning(self):
+        script = (Path(__file__).resolve().parents[1] / 'scripts/prepare_hosted_runtime.sh').read_text()
+        self.assertLess(script.index('apt-get install -y --no-install-recommends libguestfs-tools'),
+                        script.index('if [[ "$runtime" == qemu ]]; then exit 0; fi'))
+
+    def test_cloud_network_matches_stable_qemu_mac(self):
+        config=runtime.qemu_network_config()
+        device=' '.join(runtime.qemu_network_device())
+        self.assertIn('macaddress: '+runtime.HOSTED_NIC_MAC,config)
+        self.assertIn('mac='+runtime.HOSTED_NIC_MAC,device)
+        self.assertIn('dhcp4: true',config)
+        self.assertNotIn('name: eth0',config)
+
+
+class NativeStartupDiagnosticsTests(unittest.TestCase):
+    def test_start_failure_prints_bounded_incus_instance_log(self):
+        failure=subprocess.CalledProcessError(1,['sudo','incus','start','test-image'],stderr='forkstart failed')
+        diagnostic=subprocess.CompletedProcess(['sudo','incus','info'],0,'x'*7000,'')
+        output=io.StringIO()
+        with mock.patch.object(runtime,'run',side_effect=[None,None,None,failure]), \
+             mock.patch.object(runtime.subprocess,'run',return_value=diagnostic) as execute, \
+             redirect_stderr(output):
+            with self.assertRaises(subprocess.CalledProcessError):
+                runtime.native_test(Path('/tmp'),SimpleNamespace(name='image.tar.xz'),Path('/tmp/rootfs.tar.xz'))
+        self.assertIn('x'*100,output.getvalue())
+        self.assertLessEqual(len(output.getvalue()),6100)
+        diagnostic_call=execute.call_args_list[0]
+        self.assertEqual(diagnostic_call.args[0],['sudo','incus','info',mock.ANY,'--show-log'])
+        self.assertEqual(diagnostic_call.kwargs['timeout'],30)
+
+    def test_diagnostic_failure_does_not_replace_start_failure(self):
+        failure=subprocess.CalledProcessError(1,['sudo','incus','start','test-image'])
+        output=io.StringIO()
+        with mock.patch.object(runtime,'run',side_effect=[None,None,None,failure]), \
+             mock.patch.object(runtime.subprocess,'run',side_effect=[
+                 subprocess.TimeoutExpired('incus info',30),
+                 subprocess.TimeoutExpired('incus delete',60),
+                 OSError('incus image delete unavailable'),
+             ]), \
+             redirect_stderr(output):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                runtime.native_test(Path('/tmp'),SimpleNamespace(name='image.tar.xz'),Path('/tmp/rootfs.tar.xz'))
+        self.assertIs(raised.exception,failure)
+        self.assertIn('diagnostics unavailable: TimeoutExpired',output.getvalue())
+
+class GuestDHCPRecoveryTests(unittest.TestCase):
+    def test_readiness_probe_attempts_available_guest_dhcp_clients(self):
+        source=runtime.CHECK
+        self.assertIn('network_recovery()',source)
+        self.assertIn('dhclient -1 "$interface"',source)
+        self.assertIn('udhcpc -n -q',source)
+        self.assertIn('dhcpcd -n',source)
+        self.assertLess(source.index('network_recovery\n  https_check'),source.index('cat /proc/sys/kernel/random/boot_id'))
 
 if __name__=='__main__':unittest.main()
