@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import threading
 import unittest
+import yaml
 from unittest import mock
 import subprocess
 from types import SimpleNamespace
@@ -110,7 +111,10 @@ class QEMUNetworkTests(unittest.TestCase):
     def test_cloud_network_matches_stable_qemu_mac(self):
         config=runtime.qemu_network_config()
         device=' '.join(runtime.qemu_network_device())
-        self.assertIn('macaddress: '+runtime.HOSTED_NIC_MAC,config)
+        parsed=yaml.safe_load(config)['ethernets']['hosted']
+        self.assertIsInstance(parsed['match']['macaddress'],str)
+        self.assertEqual(parsed['match']['macaddress'],runtime.HOSTED_NIC_MAC)
+        self.assertIs(parsed['dhcp4'],True)
         self.assertIn('mac='+runtime.HOSTED_NIC_MAC,device)
         self.assertIn('dhcp4: true',config)
         self.assertNotIn('name: eth0',config)

@@ -231,7 +231,7 @@ def firmware_without_kernel(console):
 
 
 def qemu_network_config():
-    return f'version: 2\nethernets:\n  hosted:\n    match:\n      macaddress: {HOSTED_NIC_MAC}\n    dhcp4: true\n'
+    return f'version: 2\nethernets:\n  hosted:\n    match:\n      macaddress: "{HOSTED_NIC_MAC}"\n    dhcp4: true\n'
 
 
 def qemu_network_device():

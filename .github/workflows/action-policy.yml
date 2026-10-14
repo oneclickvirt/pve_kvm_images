@@ -25,6 +25,8 @@ jobs:
         "$(go env GOPATH)/bin/actionlint" -shellcheck= -pyflakes= -ignore 'label .* is unknown'
     - name: Verify private output isolation
       run: |
-        if [[ -d .github/tests ]]; then python3 -m unittest discover -s .github/tests -p "test_*.py"; fi
+        python3 -m venv "$RUNNER_TEMP/image-runtime-check"
+        "$RUNNER_TEMP/image-runtime-check/bin/python" -m pip install --disable-pip-version-check --retries 3 --timeout 30 PyYAML==6.0.3
+        "$RUNNER_TEMP/image-runtime-check/bin/python" -m unittest discover -s .github/tests -p "test_*.py"
     env:
       GOPROXY: https://proxy.golang.org|direct
