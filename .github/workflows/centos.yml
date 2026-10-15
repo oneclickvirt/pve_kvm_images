@@ -26,7 +26,7 @@ jobs:
       run: "source \"$RUNNER_TEMP/ci-network.sh\"\nset -euo pipefail\nuploaded_images=0\n\
         export LIBGUESTFS_BACKEND=direct\ndeclare -A centos_versions\ncentos_versions[\"\
         9\"]=\"9\"\ncentos_versions[\"8\"]=\"8\"\n# centos_versions[\"7\"]=\"7\"\n\
-        image_versions=(9 8)\nexpected_images=${#image_versions[@]}\nfor version in\
+        image_versions=(9)\nif [ \"$INCLUDE_RETIRED\" = true ]; then image_versions+=(8); fi\nexpected_images=${#image_versions[@]}\nfor version in\
         \ \"${image_versions[@]}\"; do\n    echo \"=== Processing CentOS $version\
         \ ===\"\n    rm -f centos-${version}.qcow2 centos-${version}-custom.qcow2\
         \ centos${version}.qcow2 centos-${version}.qcow2.bak\n    echo \"Downloading\
@@ -185,10 +185,16 @@ jobs:
     env:
       LIBGUESTFS_BACKEND: direct
       LIBGUESTFS_MEMSIZE: '2048'
+      INCLUDE_RETIRED: ${{ github.event_name == 'workflow_dispatch' && inputs.include_retired }}
 'on':
   schedule:
   - cron: 34 17 * * *
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      include_retired:
+        description: Also attempt retired CentOS Stream 8; previous assets survive a failed validation
+        type: boolean
+        default: false
 permissions:
   contents: write
 concurrency:
