@@ -146,6 +146,26 @@ class QEMUDiagnosticTests(unittest.TestCase):
 
 
 class QEMUEntropyTests(unittest.TestCase):
+    def test_seed_addresses_the_actual_nic_without_renderer_specific_wildcards(self):
+        import yaml
+        network = yaml.safe_load(runtime.qemu_seed_network())
+        self.assertEqual(network['version'], 1)
+        self.assertEqual(network['config'], [{'type': 'physical', 'name': 'enp5s0', 'subnets': [{'type': 'dhcp4'}]}])
+        self.assertNotIn('match:', runtime.qemu_seed_network())
+
+    def test_offline_diagnostics_are_bounded_read_only_and_strip_credentials(self):
+        output = io.StringIO()
+        result = subprocess.CompletedProcess([], 0, 'x' * 20000, '')
+        with mock.patch.dict(runtime.os.environ, {'GH_TOKEN': 'secret-a', 'GITHUB_TOKEN': 'secret-b'}), \
+             mock.patch.object(runtime.subprocess, 'run', return_value=result) as execute, redirect_stderr(output):
+            runtime.qemu_guest_diagnostics(Path('/tmp/disposable-overlay.qcow2'))
+        self.assertLess(len(output.getvalue()), 28200)
+        self.assertEqual([call.args[0][1] for call in execute.call_args_list], ['virt-log', 'virt-cat'])
+        for call in execute.call_args_list:
+            self.assertEqual(call.kwargs['timeout'], 60)
+            self.assertNotIn('GH_TOKEN', call.kwargs['env'])
+            self.assertNotIn('GITHUB_TOKEN', call.kwargs['env'])
+
     def test_early_boot_has_a_bounded_virtio_entropy_source(self):
         arguments = runtime.qemu_entropy_devices()
         self.assertEqual(arguments[0], '-object')
