@@ -437,7 +437,8 @@ def unpack(path, folder, runtime):
     if '_cloud.' in path.name:
         # Raw LXC/PVE rootfs has no Incus cloud-init template manifest. Supply
         # the NoCloud instance/network data a real consumer must provision.
-        templates={'/var/lib/cloud/seed/nocloud-net/meta-data':('meta-data.tpl','instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n'),
+        templates={'/etc/cloud/cloud.cfg.d/90-hosted-datasource.cfg':('datasource.tpl','datasource_list: [NoCloud]\n'),
+                   '/var/lib/cloud/seed/nocloud-net/meta-data':('meta-data.tpl','instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n'),
                    '/var/lib/cloud/seed/nocloud-net/user-data':('user-data.tpl','#cloud-config\nssh_pwauth: true\ndisable_root: false\n'),
                    '/var/lib/cloud/seed/nocloud-net/network-config':('network-config.tpl','version: 2\nethernets:\n  eth0:\n    dhcp4: true\n    nameservers:\n      addresses: [{{ config_get("user.hosted_dns", "") }}]\n')}
     elif path.name.endswith('.tar.zst') or os.environ.get('GITHUB_REPOSITORY')=='oneclickvirt/pve_lxc_images':

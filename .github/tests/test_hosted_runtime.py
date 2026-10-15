@@ -84,6 +84,8 @@ class GuestAgentTests(unittest.TestCase):
             with tarfile.open(metadata) as archive:
                 manifest=archive.extractfile('metadata.yaml').read().decode()
                 self.assertIn('/var/lib/cloud/seed/nocloud-net/network-config',manifest)
+                self.assertIn('/etc/cloud/cloud.cfg.d/90-hosted-datasource.cfg',manifest)
+                self.assertEqual(archive.extractfile('templates/datasource.tpl').read(), b'datasource_list: [NoCloud]\n')
                 self.assertIn('dhcp4: true',archive.extractfile('templates/network-config.tpl').read().decode())
 
 
