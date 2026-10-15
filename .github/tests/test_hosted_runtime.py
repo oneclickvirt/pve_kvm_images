@@ -146,13 +146,6 @@ class QEMUDiagnosticTests(unittest.TestCase):
 
 
 class QEMUEntropyTests(unittest.TestCase):
-    def test_seed_addresses_the_actual_nic_without_renderer_specific_wildcards(self):
-        import yaml
-        network = yaml.safe_load(runtime.qemu_seed_network())
-        self.assertEqual(network['version'], 1)
-        self.assertEqual(network['config'], [{'type': 'physical', 'name': 'enp5s0', 'subnets': [{'type': 'dhcp4'}]}])
-        self.assertNotIn('match:', runtime.qemu_seed_network())
-
     def test_offline_diagnostics_are_bounded_read_only_and_strip_credentials(self):
         output = io.StringIO()
         result = subprocess.CompletedProcess([], 0, 'x' * 20000, '')

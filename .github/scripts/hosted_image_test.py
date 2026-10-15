@@ -275,13 +275,6 @@ def qemu_entropy_devices():
             '-device', 'virtio-rng-pci,rng=hosted-rng,max-bytes=1024,period=1000']
 
 
-def qemu_seed_network():
-    # The NIC sits behind hosted-port5 on both machine types. A concrete
-    # interface in v1 also works with cloud-init's ifupdown/OpenRC renderers,
-    # which cannot reliably render the old wildcard v2 match named "hosted".
-    return 'version: 1\nconfig:\n  - type: physical\n    name: enp5s0\n    subnets:\n      - type: dhcp4\n'
-
-
 def qemu_guest_diagnostics(disk):
     # QEMU must already be stopped. These tools only read the disposable
     # overlay; the published image and its boot configuration stay intact.
@@ -299,7 +292,7 @@ def qemu_guest_diagnostics(disk):
             print('Offline '+title+' diagnostics unavailable: '+type(error).__name__, file=sys.stderr)
 
 
-def qemu_test(folder, disk, provision_key=False):
+def qemu_test(folder, disk):
     arch='arm64' if os.uname().machine=='aarch64' else 'amd64'
     accelerated=kvm_available()
     overlay=folder/'validation-overlay.qcow2'
@@ -312,20 +305,17 @@ def qemu_test(folder, disk, provision_key=False):
     seed=folder/'seed.img';user=folder/'user-data';meta=folder/'meta-data';network=folder/'network-config'
     user.write_text('#cloud-config\nssh_pwauth: false\ndisable_root: false\nusers:\n  - default\n  - name: root\n    lock_passwd: false\n    ssh_authorized_keys:\n      - '+public+'\n')
     meta.write_text('instance-id: hosted-'+uuid.uuid4().hex+'\nlocal-hostname: image-test\n')
-    network.write_text(qemu_seed_network())
+    network.write_text(qemu_network_config())
     run(['cloud-localds','--network-config='+str(network),str(seed),str(user),str(meta)])
-    consumer_password=None
-    if provision_key:
-        # Supply the consumer's login key on the disposable overlay. Do not
-        # install packages, enable missing SSH/network services or change QGA
-        # policy: the original image still has to provide those capabilities.
-        try:
-            consumer_password=secrets.token_urlsafe(32)
-            run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
+    # Seed only the temporary overlay so cloud images that ignore the
+    # NoCloud root user entry remain testable without changing the release.
+    try:
+        consumer_password=secrets.token_urlsafe(32)
+        run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
              '--root-password','password:'+consumer_password,'--selinux-relabel','--no-network'],capture_output=True,timeout=600,
-                env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
-        except subprocess.CalledProcessError:
-            raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
+            env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
+    except subprocess.CalledProcessError:
+        raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
     serial=folder/'serial.log';sock=folder/'guest-agent.sock';monitor=folder/'monitor.sock'
     with socket.socket() as listener:
         listener.bind(('127.0.0.1',0));port=listener.getsockname()[1]
@@ -340,7 +330,7 @@ def qemu_test(folder, disk, provision_key=False):
     command += qemu_entropy_devices()
     for bus in range(1,6):
         command+=['-device',f'pcie-root-port,id=hosted-port{bus},chassis={bus},bus=pcie.0,addr={bus+15:#x}']
-    command+=['-device','virtio-net-pci,netdev=net0,bus=hosted-port5,addr=0']
+    command+=qemu_network_device()
     log=(folder/'qemu.log').open('wb');process=None;mode='UEFI';storage_mode='virtio';retry_reason=None;transport='QGA';ssh_password=None
     repository=os.environ.get('GITHUB_REPOSITORY','')
     legacy_password='oneclickvirt' if repository.endswith('/pve_kvm_images') else 'password' if repository.endswith('/kvm_images') else None
