@@ -159,6 +159,12 @@ class QEMUEntropyTests(unittest.TestCase):
             self.assertNotIn('GH_TOKEN', call.kwargs['env'])
             self.assertNotIn('GITHUB_TOKEN', call.kwargs['env'])
 
+    def test_mops_workaround_is_limited_to_arm_software_emulation(self):
+        self.assertEqual(runtime.qemu_cpu_model('arm64', False), 'neoverse-n1')
+        self.assertEqual(runtime.qemu_cpu_model('amd64', False), 'max')
+        for arch in ('arm64', 'amd64'):
+            self.assertEqual(runtime.qemu_cpu_model(arch, True), 'host')
+
     def test_early_boot_has_a_bounded_virtio_entropy_source(self):
         arguments = runtime.qemu_entropy_devices()
         self.assertEqual(arguments[0], '-object')

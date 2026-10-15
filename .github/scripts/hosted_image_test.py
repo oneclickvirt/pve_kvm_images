@@ -267,6 +267,17 @@ def qemu_host_diagnostics(monitor):
             print('QEMU '+command+' diagnostics unavailable: '+type(error).__name__, file=sys.stderr)
 
 
+def qemu_cpu_model(arch, accelerated):
+    # Hosted QEMU 8.2 ARM TCG advertises MOPS under max. New EL10 kernels
+    # select its memset implementation and can panic in move_module while
+    # SETGM crosses a page boundary. Use an ARMv8.2 baseline without MOPS:
+    # QEMU 8.2 cannot disable MOPS with a CPU property. KVM keeps the real
+    # host CPU; this changes only the disposable test machine.
+    if accelerated:
+        return 'host'
+    return 'neoverse-n1' if arch == 'arm64' else 'max'
+
+
 def qemu_entropy_devices():
     # EL initramfs can block waiting for CRNG initialization on a new VM,
     # particularly under ARM TCG. Supply real host entropy through virtio,
@@ -321,7 +332,7 @@ def qemu_test(folder, disk):
         listener.bind(('127.0.0.1',0));port=listener.getsockname()[1]
     command=['qemu-system-aarch64' if arch=='arm64' else 'qemu-system-x86_64',
              '-machine','virt' if arch=='arm64' else 'q35','-accel','kvm' if accelerated else 'tcg,thread=multi',
-             '-cpu','host' if accelerated else 'max','-m','2048','-smp','2',
+             '-cpu',qemu_cpu_model(arch,accelerated),'-m','2048','-smp','2',
              '-display','none','-serial',f'file:{serial}','-monitor',f'unix:{monitor},server=on,wait=off',
              '-drive',f'file={overlay},format=qcow2,if=none,id=guestdisk','-drive',f'file={seed},format=raw,if=virtio',
              '-netdev',f'user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22',
