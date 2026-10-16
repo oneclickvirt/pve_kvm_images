@@ -84,7 +84,12 @@ while IFS= read -r image; do
   record container "$image"
   pct stop "$id"
   pct destroy "$id" --purge 1
-done < <(python3 -c 'import json; print("\n".join(x["name"] for x in json.load(open("manifest.json")) if x["kind"]=="container"))')
+done < <(python3 -c '
+import json
+for asset in json.load(open("manifest.json")):
+    if asset["kind"] == "container":
+        print(asset["name"])
+')
 image=$(python3 -c 'import json; print(next(x["name"] for x in json.load(open("manifest.json")) if x["kind"]=="vm"))')
 [[ "$image" =~ ^[A-Za-z0-9_.-]+\.qcow2$ ]]
 # Under nested software emulation SCSI coldplug can finish only after
