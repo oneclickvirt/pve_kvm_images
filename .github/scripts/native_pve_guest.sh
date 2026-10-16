@@ -126,6 +126,7 @@ serial_pid=$!
 qm start 201
 wait_vm() {
   local previous=${1:-} boot deadline=$((SECONDS+vm_boot_budget)) progress=$SECONDS
+  : > last-vm-error.log
   while (( SECONDS < deadline )); do
     if grep -Eq 'Gave up waiting for root file system device|ALERT!.*does not exist.*Dropping to a shell' native-vm-serial.log; then
       echo 'Native qm boot entered initramfs emergency state; retaining failure diagnostics' >&2
