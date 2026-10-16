@@ -11,12 +11,19 @@ on:
           - auto
           - tcg
         default: auto
+      scope:
+        description: Test all five inputs, or only the VM when diagnosing a VM failure
+        type: choice
+        options:
+          - all
+          - vm
+        default: all
 permissions:
   contents: read
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 concurrency:
-  group: native-pve-image-smoke
+  group: native-pve-image-smoke-${{ inputs.outer_acceleration || 'auto' }}
   cancel-in-progress: false
 jobs:
   native-pve:
@@ -38,4 +45,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OUTER_ACCELERATION: ${{ inputs.outer_acceleration || 'auto' }}
-        run: python3 .github/scripts/native_pve_smoke.py --outer-accel "$OUTER_ACCELERATION"
+          TEST_SCOPE: ${{ inputs.scope || 'all' }}
+        run: python3 .github/scripts/native_pve_smoke.py --outer-accel "$OUTER_ACCELERATION" --scope "$TEST_SCOPE"

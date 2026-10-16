@@ -38,13 +38,15 @@ def digest(file, algorithm):
     return value.hexdigest()
 
 
-def select_assets(token):
+def select_assets(token, scope='all'):
     selected = []
     for repo, tag, patterns, kind in [
         ('pve_kvm_images', 'debian', [r'debian13\.qcow2'], 'vm'),
         ('pve_lxc_images', 'maintained', [r'debian_12_.*_amd64\.tar\.zst', r'debian_13_.*_amd64\.tar\.zst',
                                        r'ubuntu_24\.04_.*_amd64\.tar\.zst', r'ubuntu_26\.04_.*_amd64\.tar\.zst'], 'container'),
     ]:
+        if scope == 'vm' and kind != 'vm':
+            continue
         publisher = Publisher('oneclickvirt/' + repo, token)
         release = publisher.request(publisher.base + '/releases/tags/' + tag)
         if release['draft'] or release['prerelease']:
@@ -61,7 +63,7 @@ def select_assets(token):
     return selected
 
 
-def run(folder, acceleration):
+def run(folder, acceleration, scope):
     accelerated = acceleration == 'auto' and kvm_available()
     selected_acceleration = 'kvm' if accelerated else 'tcg'
     print('NATIVE_PVE_OUTER_ACCELERATION ' + selected_acceleration, flush=True)
@@ -70,7 +72,8 @@ def run(folder, acceleration):
     if not accelerated and os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') >= 10 * 1024**3:
         host_memory = 6144
     print(f'NATIVE_PVE_HOST_RESOURCES vcpus={host_cpus} memory_mib={host_memory}', flush=True)
-    manifest = select_assets(os.environ['GH_TOKEN'])
+    manifest = select_assets(os.environ['GH_TOKEN'], scope)
+    print(f'NATIVE_PVE_SCOPE scope={scope} images={len(manifest)}', flush=True)
     for asset in manifest:
         path = folder / asset['name']
         download(asset['browser_download_url'], path)
@@ -189,11 +192,12 @@ def run(folder, acceleration):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--outer-accel', choices=['auto', 'tcg'], default='auto')
+    parser.add_argument('--scope', choices=['all', 'vm'], default='all')
     args = parser.parse_args()
     if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted' or os.environ.get('RUNNER_ARCH') != 'X64':
         raise RuntimeError('a disposable GitHub-hosted AMD64 runner is required')
     with tempfile.TemporaryDirectory(prefix='native-pve-', dir=os.environ.get('RUNNER_TEMP')) as temporary:
-        run(Path(temporary), args.outer_accel)
+        run(Path(temporary), args.outer_accel, args.scope)
 
 
 if __name__ == '__main__':

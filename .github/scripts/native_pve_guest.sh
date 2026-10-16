@@ -87,6 +87,12 @@ while IFS= read -r image; do
 done < <(python3 -c 'import json; print("\n".join(x["name"] for x in json.load(open("manifest.json")) if x["kind"]=="container"))')
 image=$(python3 -c 'import json; print(next(x["name"] for x in json.load(open("manifest.json")) if x["kind"]=="vm"))')
 [[ "$image" =~ ^[A-Za-z0-9_.-]+\.qcow2$ ]]
+# Under nested software emulation SCSI coldplug can finish only after
+# initramfs has already abandoned the root device. Use the supported
+# VirtIO block controller for that path; retain SCSI coverage on KVM hosts.
+disk_slot=scsi0
+if [[ "$NATIVE_PVE_OUTER_ACCELERATION" == tcg ]]; then disk_slot=virtio0; fi
+echo "NATIVE_PVE_VM_STORAGE $disk_slot"
 echo "Native qm test with KVM disabled: $image"
 qm create 201 --name image-vm --ostype l26 --memory 2048 --cores 2 --kvm 0 --cpu x86-64-v2-AES \
   --machine q35 --bios ovmf --efidisk0 local:1,efitype=4m,pre-enrolled-keys=0 \
@@ -96,7 +102,7 @@ volume=$(qm config 201 | awk -F': ' '$1=="unused0" {print $2}')
 [[ "$volume" == local:* ]]
 # These are cloud images: supply the same PVE-generated NoCloud network data
 # a consumer must configure, without modifying the published filesystem.
-qm set 201 --scsi0 "$volume" --boot order=scsi0 --ide2 local:cloudinit \
+qm set 201 --"$disk_slot" "$volume" --boot "order=$disk_slot" --ide2 local:cloudinit \
   --ipconfig0 ip=dhcp --nameserver 1.1.1.1
 qm config 201 | grep -Fx 'kvm: 0'
 python3 -u - <<'PY' >native-vm-serial.log 2>&1 &
@@ -121,6 +127,10 @@ qm start 201
 wait_vm() {
   local previous=${1:-} boot deadline=$((SECONDS+vm_boot_budget)) progress=$SECONDS
   while (( SECONDS < deadline )); do
+    if grep -Eq 'Gave up waiting for root file system device|ALERT!.*does not exist.*Dropping to a shell' native-vm-serial.log; then
+      echo 'Native qm boot entered initramfs emergency state; retaining failure diagnostics' >&2
+      break
+    fi
     if timeout 150 qm guest exec 201 --timeout 120 -- /bin/sh -c "$check" >vm-exec.json 2>last-vm-error.log; then
       if boot=$(python3 - <<'PY'
 import json,re,sys
