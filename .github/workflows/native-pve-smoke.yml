@@ -1,5 +1,7 @@
 name: Native PVE image smoke
 on:
+  schedule:
+    - cron: '43 3 * * 2'
   workflow_dispatch:
     inputs:
       outer_acceleration:
