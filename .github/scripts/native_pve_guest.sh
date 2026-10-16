@@ -6,7 +6,21 @@ workdir=$PWD
 check=$(cat guest-check.sh)
 : > native-results.jsonl
 serial_pid=''
+case "${NATIVE_PVE_OUTER_ACCELERATION:?PVE host acceleration must be explicit}" in
+  kvm) vm_boot_budget=900; service_budget=120 ;;
+  tcg) vm_boot_budget=2700; service_budget=300 ;;
+  *) echo 'Unsupported PVE host acceleration' >&2; exit 1 ;;
+esac
+echo "NATIVE_PVE_NATIVE_BUDGET vm_boot_seconds=$vm_boot_budget"
 pveversion
+service_deadline=$((SECONDS+service_budget))
+until systemctl is-active --quiet pve-cluster && systemctl is-active --quiet pvedaemon; do
+  if (( SECONDS >= service_deadline )); then
+    systemctl status pve-cluster pvedaemon --no-pager >&2 || true
+    exit 1
+  fi
+  sleep 5
+done
 systemctl is-active pve-cluster pvedaemon
 storages=$(pvesh get /storage --output-format json)
 if python3 -c 'import json,sys; sys.exit(0 if any(x["storage"]=="local" for x in json.load(sys.stdin)) else 1)' <<<"$storages"; then
@@ -105,9 +119,9 @@ PY
 serial_pid=$!
 qm start 201
 wait_vm() {
-  local previous=${1:-} boot deadline=$((SECONDS+900)) progress=$SECONDS
+  local previous=${1:-} boot deadline=$((SECONDS+vm_boot_budget)) progress=$SECONDS
   while (( SECONDS < deadline )); do
-    if timeout 60 qm guest exec 201 --timeout 40 -- /bin/sh -c "$check" >vm-exec.json 2>last-vm-error.log; then
+    if timeout 150 qm guest exec 201 --timeout 120 -- /bin/sh -c "$check" >vm-exec.json 2>last-vm-error.log; then
       if boot=$(python3 - <<'PY'
 import json,re,sys
 result=json.load(open('vm-exec.json'))

@@ -63,7 +63,13 @@ def select_assets(token):
 
 def run(folder, acceleration):
     accelerated = acceleration == 'auto' and kvm_available()
-    print('NATIVE_PVE_OUTER_ACCELERATION ' + ('kvm' if accelerated else 'tcg'), flush=True)
+    selected_acceleration = 'kvm' if accelerated else 'tcg'
+    print('NATIVE_PVE_OUTER_ACCELERATION ' + selected_acceleration, flush=True)
+    host_cpus = 2 if accelerated else min(4, os.cpu_count() or 2)
+    host_memory = 4096
+    if not accelerated and os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') >= 10 * 1024**3:
+        host_memory = 6144
+    print(f'NATIVE_PVE_HOST_RESOURCES vcpus={host_cpus} memory_mib={host_memory}', flush=True)
     manifest = select_assets(os.environ['GH_TOKEN'])
     for asset in manifest:
         path = folder / asset['name']
@@ -123,7 +129,7 @@ def run(folder, acceleration):
         raise RuntimeError('disposable PVE host readiness or kernel reboot budget exhausted')
 
     qemu = ['qemu-system-x86_64', '-machine', 'q35', '-accel', 'kvm' if accelerated else 'tcg,thread=multi',
-            '-cpu', 'host' if accelerated else 'max', '-m', '4096', '-smp', '2', '-display', 'none',
+            '-cpu', 'host' if accelerated else 'max', '-m', str(host_memory), '-smp', str(host_cpus), '-display', 'none',
             '-serial', 'file:' + str(folder / 'host-serial.log'),
             '-drive', 'file=' + str(disk) + ',format=qcow2,if=virtio',
             '-drive', 'file=' + str(seed) + ',format=raw,if=virtio,readonly=on',
@@ -142,7 +148,7 @@ def run(folder, acceleration):
             paths.append(check)
             paths.extend(folder / a['name'] for a in manifest)
             command(['scp'] + ssh_options + ['-P', str(port)] + [str(p) for p in paths] + [target + ':/home/ci/'], timeout=600)
-            ssh('sudo -n bash /home/ci/native_pve_provision.sh', timeout=2100)
+            ssh('sudo -n bash /home/ci/native_pve_provision.sh', timeout=2100 if accelerated else 3600)
             try:
                 ssh('sudo -n reboot', timeout=30)
             except subprocess.CalledProcessError as error:
@@ -151,7 +157,8 @@ def run(folder, acceleration):
             wait_host(boot, require_pve=True)
             # Stream native progress and diagnostics while keeping the acceptance
             # records separate from console noise. This host is disposable.
-            ssh('sudo -n bash /home/ci/native_pve_guest.sh', timeout=2400)
+            ssh('sudo -n env NATIVE_PVE_OUTER_ACCELERATION=' + selected_acceleration +
+                ' bash /home/ci/native_pve_guest.sh', timeout=2400 if accelerated else 7200)
             result = ssh('cat /home/ci/native-results.jsonl', capture_output=True, text=True)
             records = [json.loads(line.split(' ', 1)[1]) for line in result.stdout.splitlines() if line.startswith('NATIVE_PVE_IMAGE_RESULT ')]
             expected = {(a['kind'], a['name']) for a in manifest}
