@@ -9,7 +9,7 @@ jobs:
         set -euo pipefail
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/ci_network.sh" -o "$RUNNER_TEMP/ci-network.sh"
         curl --fail --silent --show-error --location --connect-timeout 15 --max-time 90 --retry 3 --retry-max-time 180 --retry-connrefused "https://raw.githubusercontent.com/oneclickvirt/pve_kvm_images/main/.github/scripts/release_assets.py" -o "$RUNNER_TEMP/ci-release-assets.py"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Prepare hosted VM runtime validation
       run: bash .github/scripts/prepare_hosted_runtime.sh qemu
     - name: check path
