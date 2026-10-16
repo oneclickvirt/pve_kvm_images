@@ -149,8 +149,10 @@ def run(folder, acceleration):
                 if error.returncode != 255:
                     raise
             wait_host(boot, require_pve=True)
-            result = ssh('sudo -n bash /home/ci/native_pve_guest.sh', timeout=2400, capture_output=True, text=True)
-            print(result.stdout, flush=True)
+            # Stream native progress and diagnostics while keeping the acceptance
+            # records separate from console noise. This host is disposable.
+            ssh('sudo -n bash /home/ci/native_pve_guest.sh', timeout=2400)
+            result = ssh('cat /home/ci/native-results.jsonl', capture_output=True, text=True)
             records = [json.loads(line.split(' ', 1)[1]) for line in result.stdout.splitlines() if line.startswith('NATIVE_PVE_IMAGE_RESULT ')]
             expected = {(a['kind'], a['name']) for a in manifest}
             if len(records) != len(expected) or {(r['kind'], r['image']) for r in records if r.get('success') is True} != expected:

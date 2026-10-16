@@ -4,6 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 workdir=$PWD
 check=$(cat guest-check.sh)
+: > native-results.jsonl
+serial_pid=''
 pveversion
 systemctl is-active pve-cluster pvedaemon
 storages=$(pvesh get /storage --output-format json)
@@ -25,6 +27,7 @@ dnsmasq --interface=vmbr0 --bind-interfaces --except-interface=lo --port=0 \
   --dhcp-range=10.42.0.100,10.42.0.150,255.255.255.0,1h \
   --dhcp-option=3,10.42.0.1 --dhcp-option=6,1.1.1.1 --pid-file="$workdir/dnsmasq.pid"
 cleanup() {
+  if [[ -n "$serial_pid" ]]; then kill "$serial_pid" 2>/dev/null || true; fi
   qm stop 201 --skiplock 1 >/dev/null 2>&1 || true
   qm destroy 201 --purge 1 >/dev/null 2>&1 || true
   for id in 101 102 103 104; do
@@ -35,7 +38,7 @@ cleanup() {
 }
 trap cleanup EXIT
 record() {
-  python3 - "$1" "$2" <<'PY'
+  python3 - "$1" "$2" <<'PY' | tee -a native-results.jsonl
 import json,sys
 print('NATIVE_PVE_IMAGE_RESULT '+json.dumps({'kind':sys.argv[1], 'image':sys.argv[2], 'success':True}),flush=True)
 PY
@@ -71,17 +74,38 @@ done < <(python3 -c 'import json; print("\n".join(x["name"] for x in json.load(o
 image=$(python3 -c 'import json; print(next(x["name"] for x in json.load(open("manifest.json")) if x["kind"]=="vm"))')
 [[ "$image" =~ ^[A-Za-z0-9_.-]+\.qcow2$ ]]
 echo "Native qm test with KVM disabled: $image"
-qm create 201 --name image-vm --memory 2048 --cores 2 --kvm 0 --cpu x86-64-v2-AES \
+qm create 201 --name image-vm --ostype l26 --memory 2048 --cores 2 --kvm 0 --cpu x86-64-v2-AES \
   --machine q35 --bios ovmf --efidisk0 local:1,efitype=4m,pre-enrolled-keys=0 \
   --scsihw virtio-scsi-pci --agent enabled=1 --net0 virtio,bridge=vmbr0 --serial0 socket --vga serial0
 qm importdisk 201 "$workdir/$image" local --format qcow2
 volume=$(qm config 201 | awk -F': ' '$1=="unused0" {print $2}')
 [[ "$volume" == local:* ]]
-qm set 201 --scsi0 "$volume" --boot order=scsi0
+# These are cloud images: supply the same PVE-generated NoCloud network data
+# a consumer must configure, without modifying the published filesystem.
+qm set 201 --scsi0 "$volume" --boot order=scsi0 --ide2 local:cloudinit \
+  --ipconfig0 ip=dhcp --nameserver 1.1.1.1
 qm config 201 | grep -Fx 'kvm: 0'
+python3 -u - <<'PY' >native-vm-serial.log 2>&1 &
+import socket,sys,time
+deadline=time.monotonic()+120
+stream=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+while True:
+    try:
+        stream.connect('/run/qemu-server/201.serial0')
+        break
+    except (FileNotFoundError,ConnectionRefusedError):
+        if time.monotonic()>deadline: raise
+        time.sleep(1)
+while True:
+    data=stream.recv(65536)
+    if not data: break
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+PY
+serial_pid=$!
 qm start 201
 wait_vm() {
-  local previous=${1:-} boot deadline=$((SECONDS+900))
+  local previous=${1:-} boot deadline=$((SECONDS+900)) progress=$SECONDS
   while (( SECONDS < deadline )); do
     if timeout 60 qm guest exec 201 --timeout 40 -- /bin/sh -c "$check" >vm-exec.json 2>last-vm-error.log; then
       if boot=$(python3 - <<'PY'
@@ -95,11 +119,20 @@ PY
         if [[ "$boot" != "$previous" ]]; then printf '%s\n' "$boot"; return 0; fi
       fi
     fi
+    if (( SECONDS >= progress )); then
+      echo "Native qm readiness pending; remaining budget $((deadline-SECONDS))s" >&2
+      cat last-vm-error.log >&2
+      if [[ -s vm-exec.json ]]; then cat vm-exec.json >&2; fi
+      progress=$((SECONDS+60))
+    fi
     sleep 5
   done
   cat last-vm-error.log >&2
+  if [[ -s vm-exec.json ]]; then cat vm-exec.json >&2; fi
   qm config 201 >&2 || true
-  tail -n 80 /var/log/pve/qemu-server/201.log >&2 || true
+  tail -c 20000 native-vm-serial.log >&2 || true
+  timeout 60 qm guest exec 201 --timeout 40 -- /bin/sh -c \
+    'ip address; ip route; cat /etc/resolv.conf; systemctl --failed --no-pager; journalctl -b -n 80 --no-pager' >&2 || true
   return 1
 }
 boot=$(wait_vm)
