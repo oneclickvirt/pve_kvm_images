@@ -6,6 +6,7 @@ address=$(ip -4 -o address show scope global | awk 'NR==1 {split($4,a,"/"); prin
 [[ -n "$address" ]]
 sed -i '/[[:space:]]pve-ci\([[:space:].]\|$\)/d' /etc/hosts
 printf '%s pve-ci.test pve-ci\n' "$address" >> /etc/hosts
+printf 'manage_etc_hosts: false\n' >/etc/cloud/cloud.cfg.d/99-pve-ci-hosts.cfg
 cat >/etc/apt/apt.conf.d/80-ci-bounds <<'EOF'
 Acquire::Retries "3";
 Acquire::http::Timeout "30";

@@ -6,7 +6,8 @@ workdir=$PWD
 check=$(cat guest-check.sh)
 pveversion
 systemctl is-active pve-cluster pvedaemon
-if grep -qE '^dir:[[:space:]]+local$' /etc/pve/storage.cfg 2>/dev/null; then
+storages=$(pvesh get /storage --output-format json)
+if python3 -c 'import json,sys; sys.exit(0 if any(x["storage"]=="local" for x in json.load(sys.stdin)) else 1)' <<<"$storages"; then
   pvesm set local --content images,rootdir,vztmpl,iso,backup
 else
   pvesm add dir local --path /var/lib/vz --content images,rootdir,vztmpl,iso,backup
