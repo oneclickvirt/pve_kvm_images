@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       outer_acceleration:
-        description: Acceleration for the disposable PVE host; its inner VM always disables KVM
+        description: Acceleration for the disposable PVE host
         type: choice
         options:
           - auto
@@ -18,12 +18,20 @@ on:
           - all
           - vm
         default: all
+      vm_execution:
+        description: auto uses qm on KVM hosts and direct runner TCG on software hosts; native requires qm
+        type: choice
+        options:
+          - auto
+          - native
+          - runner
+        default: auto
 permissions:
   contents: read
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 concurrency:
-  group: native-pve-image-smoke-${{ inputs.outer_acceleration || 'auto' }}
+  group: native-pve-image-smoke-${{ inputs.outer_acceleration || 'auto' }}-${{ inputs.vm_execution || 'auto' }}
   cancel-in-progress: false
 jobs:
   native-pve:
@@ -37,13 +45,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source .github/scripts/ci_network.sh
-          ci_retry sudo apt-get update
-          ci_retry sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client curl
-          if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
-      - name: Test real pct and qm on a temporary PVE host
+          bash .github/scripts/prepare_hosted_runtime.sh qemu
+      - name: Test images and report the actual pct, qm or direct TCG backend
         env:
           GH_TOKEN: ${{ github.token }}
           OUTER_ACCELERATION: ${{ inputs.outer_acceleration || 'auto' }}
           TEST_SCOPE: ${{ inputs.scope || 'all' }}
-        run: python3 .github/scripts/native_pve_smoke.py --outer-accel "$OUTER_ACCELERATION" --scope "$TEST_SCOPE"
+          VM_EXECUTION: ${{ inputs.vm_execution || 'auto' }}
+        run: python3 .github/scripts/native_pve_smoke.py --outer-accel "$OUTER_ACCELERATION" --scope "$TEST_SCOPE" --vm-execution "$VM_EXECUTION"

@@ -6,6 +6,10 @@ workdir=$PWD
 check=$(cat guest-check.sh)
 : > native-results.jsonl
 serial_pid=''
+case "${NATIVE_PVE_VM_EXECUTION:?VM execution mode must be explicit}" in
+  native|runner) ;;
+  *) echo 'Unsupported VM execution mode' >&2; exit 1 ;;
+esac
 case "${NATIVE_PVE_OUTER_ACCELERATION:?PVE host acceleration must be explicit}" in
   kvm) vm_boot_budget=900; service_budget=120 ;;
   tcg) vm_boot_budget=2700; service_budget=300 ;;
@@ -54,7 +58,8 @@ trap cleanup EXIT
 record() {
   python3 - "$1" "$2" <<'PY' | tee -a native-results.jsonl
 import json,sys
-print('NATIVE_PVE_IMAGE_RESULT '+json.dumps({'kind':sys.argv[1], 'image':sys.argv[2], 'success':True}),flush=True)
+print('NATIVE_PVE_IMAGE_RESULT '+json.dumps({'kind':sys.argv[1], 'image':sys.argv[2],
+      'backend':'pct' if sys.argv[1]=='container' else 'qm', 'success':True}),flush=True)
 PY
 }
 wait_ct() {
@@ -90,6 +95,10 @@ for asset in json.load(open("manifest.json")):
     if asset["kind"] == "container":
         print(asset["name"])
 ')
+if [[ "$NATIVE_PVE_VM_EXECUTION" == runner ]]; then
+  echo "NATIVE_PVE_HOST_RESULT success=true containers=$((id-100)) vm_execution=runner"
+  exit 0
+fi
 image=$(python3 -c 'import json; print(next(x["name"] for x in json.load(open("manifest.json")) if x["kind"]=="vm"))')
 [[ "$image" =~ ^[A-Za-z0-9_.-]+\.qcow2$ ]]
 # Under nested software emulation SCSI coldplug can finish only after
@@ -133,7 +142,7 @@ wait_vm() {
   local previous=${1:-} boot deadline=$((SECONDS+vm_boot_budget)) progress=$SECONDS
   : > last-vm-error.log
   while (( SECONDS < deadline )); do
-    if grep -Eq 'Gave up waiting for root file system device|ALERT!.*does not exist.*Dropping to a shell' native-vm-serial.log; then
+    if grep -Eq 'Gave up waiting for root file system device|ALERT!.*does not exist.*Dropping to a shell|run-init: opening console:|No init found[.]|Kernel panic - not syncing' native-vm-serial.log; then
       echo 'Native qm boot entered initramfs emergency state; retaining failure diagnostics' >&2
       break
     fi

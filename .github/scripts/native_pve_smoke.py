@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import time
 
-from hosted_image_test import CHECK, isolated_environment, kvm_available
+from hosted_image_test import CHECK, isolated_environment, kvm_available, qemu_test
 from release_assets import Publisher
 
 
@@ -63,15 +63,31 @@ def select_assets(token, scope='all'):
     return selected
 
 
-def run(folder, acceleration, scope):
+def vm_execution_mode(outer_acceleration, requested):
+    if outer_acceleration not in ('kvm', 'tcg') or requested not in ('auto', 'native', 'runner'):
+        raise ValueError('invalid PVE execution mode')
+    if requested == 'auto':
+        return 'native' if outer_acceleration == 'kvm' else 'runner'
+    return requested
+
+
+def validate_results(manifest, records, vm_execution):
+    expected = {(a['kind'], a['name'],
+                 'pct' if a['kind'] == 'container' else 'qm' if vm_execution == 'native' else 'qemu-tcg')
+                for a in manifest}
+    actual = {(r.get('kind'), r.get('image'), r.get('backend')) for r in records if r.get('success') is True}
+    if not expected or len(records) != len(expected) or actual != expected:
+        raise ValueError('incomplete or incorrectly attributed PVE image results')
+
+
+def run(folder, acceleration, scope, vm_execution='auto'):
     accelerated = acceleration == 'auto' and kvm_available()
     selected_acceleration = 'kvm' if accelerated else 'tcg'
+    selected_vm_execution = vm_execution_mode(selected_acceleration, vm_execution)
     print('NATIVE_PVE_OUTER_ACCELERATION ' + selected_acceleration, flush=True)
-    host_cpus = 2 if accelerated else min(4, os.cpu_count() or 2)
-    host_memory = 4096
-    if not accelerated and os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') >= 10 * 1024**3:
-        host_memory = 6144
-    print(f'NATIVE_PVE_HOST_RESOURCES vcpus={host_cpus} memory_mib={host_memory}', flush=True)
+    print(f'PVE_SMOKE_EXECUTION_PLAN requested={vm_execution} vm_execution={selected_vm_execution}', flush=True)
+    if selected_vm_execution == 'runner':
+        print('PVE_SMOKE_FALLBACK VM uses direct runner QEMU TCG; this is not native qm coverage', flush=True)
     manifest = select_assets(os.environ['GH_TOKEN'], scope)
     print(f'NATIVE_PVE_SCOPE scope={scope} images={len(manifest)}', flush=True)
     for asset in manifest:
@@ -80,6 +96,35 @@ def run(folder, acceleration, scope):
         if path.stat().st_size != asset['size'] or 'sha256:' + digest(path, 'sha256') != asset['digest']:
             raise ValueError('native PVE input identity mismatch: ' + asset['name'])
         print('NATIVE_PVE_INPUT ' + json.dumps({k: asset[k] for k in ('repo', 'name', 'id', 'size', 'digest')}), flush=True)
+    native_manifest = [a for a in manifest if a['kind'] == 'container' or selected_vm_execution == 'native']
+    records = []
+    if native_manifest:
+        records = run_native_host(folder, native_manifest, accelerated, selected_vm_execution)
+    if selected_vm_execution == 'runner':
+        # Stop the PVE host before launching the VM so the two software
+        # emulators never compete for the runner's memory or CPU budget.
+        for asset in manifest:
+            if asset['kind'] == 'vm':
+                with tempfile.TemporaryDirectory(prefix='direct-vm-', dir=folder) as temporary:
+                    qemu_test(Path(temporary), folder / asset['name'], acceleration='tcg')
+                record = {'kind': 'vm', 'image': asset['name'], 'backend': 'qemu-tcg', 'success': True}
+                records.append(record)
+                print('PVE_RUNNER_IMAGE_RESULT ' + json.dumps(record), flush=True)
+    validate_results(manifest, records, selected_vm_execution)
+    if selected_vm_execution == 'native':
+        print('NATIVE_PVE_SMOKE_RESULT success=true images=' + str(len(records)), flush=True)
+    print(f'PVE_SMOKE_RESULT success=true images={len(records)} native_images={len(native_manifest)} '
+          f'runner_qemu_images={len(records)-len(native_manifest)} outer_acceleration={selected_acceleration} '
+          f'vm_execution={selected_vm_execution}', flush=True)
+
+
+def run_native_host(folder, manifest, accelerated, vm_execution):
+    selected_acceleration = 'kvm' if accelerated else 'tcg'
+    host_cpus = 2 if accelerated else min(4, os.cpu_count() or 2)
+    host_memory = 4096
+    if not accelerated and os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') >= 10 * 1024**3:
+        host_memory = 6144
+    print(f'NATIVE_PVE_HOST_RESOURCES vcpus={host_cpus} memory_mib={host_memory}', flush=True)
     (folder / 'manifest.json').write_text(json.dumps(manifest))
     checksums = folder / 'SHA512SUMS'
     base = folder / BASE_NAME
@@ -161,14 +206,13 @@ def run(folder, acceleration, scope):
             # Stream native progress and diagnostics while keeping the acceptance
             # records separate from console noise. This host is disposable.
             ssh('sudo -n env NATIVE_PVE_OUTER_ACCELERATION=' + selected_acceleration +
+                ' NATIVE_PVE_VM_EXECUTION=' + vm_execution +
                 ' bash /home/ci/native_pve_guest.sh', timeout=2400 if accelerated else 7200)
             result = ssh('cat /home/ci/native-results.jsonl', capture_output=True, text=True)
             records = [json.loads(line.split(' ', 1)[1]) for line in result.stdout.splitlines() if line.startswith('NATIVE_PVE_IMAGE_RESULT ')]
-            expected = {(a['kind'], a['name']) for a in manifest}
-            if len(records) != len(expected) or {(r['kind'], r['image']) for r in records if r.get('success') is True} != expected:
-                raise ValueError('incomplete native PVE image results')
+            validate_results(manifest, records, vm_execution)
             accepted = True
-            print('NATIVE_PVE_SMOKE_RESULT success=true images=' + str(len(records)), flush=True)
+            return records
         except subprocess.CalledProcessError as error:
             if error.stdout:
                 print(error.stdout[-24000:], flush=True)
@@ -193,11 +237,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--outer-accel', choices=['auto', 'tcg'], default='auto')
     parser.add_argument('--scope', choices=['all', 'vm'], default='all')
+    parser.add_argument('--vm-execution', choices=['auto', 'native', 'runner'], default='auto')
     args = parser.parse_args()
     if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted' or os.environ.get('RUNNER_ARCH') != 'X64':
         raise RuntimeError('a disposable GitHub-hosted AMD64 runner is required')
     with tempfile.TemporaryDirectory(prefix='native-pve-', dir=os.environ.get('RUNNER_TEMP')) as temporary:
-        run(Path(temporary), args.outer_accel, args.scope)
+        run(Path(temporary), args.outer_accel, args.scope, args.vm_execution)
 
 
 if __name__ == '__main__':
