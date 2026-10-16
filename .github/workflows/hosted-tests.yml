@@ -1,74 +1,21 @@
-name: Hosted published image tests
-'on':
-  workflow_dispatch:
-    inputs:
-      scope:
-        description: Published image coverage
-        type: choice
-        options:
-        - smoke
-        - maintained
-        - full
-        default: smoke
-      acceleration:
-        description: auto uses KVM when available; tcg forces software for the guest and overlay tools
-        type: choice
-        options:
-        - auto
-        - tcg
-        - kvm
-        - both
-        default: auto
-      image:
-        description: Exact asset filename; empty selects the suite
-        type: string
-        default: ''
-  schedule:
-  - cron: 27 3 * * 1
+name: Read-only published PVE initramfs diagnostics
+on:
+  workflow_dispatch: {}
 permissions:
   contents: read
-concurrency:
-  group: hosted-published-image-tests-${{ inputs.image || inputs.scope || 'smoke' }}-${{ inputs.acceleration || 'both' }}
-  cancel-in-progress: false
 jobs:
-  catalog:
+  inspect:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      matrix: ${{ steps.catalog.outputs.matrix }}
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - id: catalog
-      env:
-        GH_TOKEN: ${{ github.token }}
-        SCOPE: ${{ inputs.scope || 'smoke' }}
-        IMAGE: ${{ inputs.image }}
-        ACCELERATION: ${{ inputs.acceleration || 'both' }}
-      run: python3 .github/scripts/published_image_suite.py matrix --scope "$SCOPE"
-        --kind vm --acceleration "$ACCELERATION"
-  test:
-    needs: catalog
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix: ${{ fromJSON(needs.catalog.outputs.matrix) }}
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Prepare disposable runtime
-      run: bash .github/scripts/prepare_hosted_runtime.sh qemu
-    - name: Download verified published asset
-      env:
-        GH_TOKEN: ${{ github.token }}
-        IMAGE: ${{ matrix.image }}
-        TAG: ${{ matrix.tag }}
-      run: python3 .github/scripts/published_image_suite.py download
-    - name: Validate guest boot, SSH, network and restart
-      env:
-        IMAGE: ${{ matrix.image }}
-        ACCELERATION: ${{ matrix.acceleration }}
-      run: python3 .github/scripts/hosted_image_test.py --file "$IMAGE" --runtime
-        qemu --accel "$ACCELERATION"
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Prepare read-only TCG inspection tools
+        run: bash .github/scripts/prepare_hosted_runtime.sh qemu
+      - name: Verify and inspect the actual released initramfs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/inspect_published_initramfs.py
