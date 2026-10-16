@@ -88,6 +88,26 @@ def kvm_available():
     except OSError:return False
 
 
+def qemu_accelerated(mode):
+    if mode not in ('auto', 'kvm', 'tcg'):
+        raise ValueError('invalid QEMU acceleration mode')
+    if mode == 'tcg':
+        return False
+    available = kvm_available()
+    if mode == 'kvm' and not available:
+        raise RuntimeError('KVM was explicitly requested but is unavailable')
+    return available
+
+
+def guestfs_command(tool, accelerated):
+    # sudo resets the caller environment. Pass the backend explicitly so
+    # a forced TCG test also provisions its overlay without using KVM.
+    command = ['sudo', 'env', 'LIBGUESTFS_BACKEND=direct']
+    if not accelerated:
+        command.append('LIBGUESTFS_BACKEND_SETTINGS=force_tcg')
+    return command + [tool]
+
+
 def native_test(folder, metadata, rootfs, vm=False, cli='incus'):
     alias='image-'+uuid.uuid4().hex[:12]; name='test-'+uuid.uuid4().hex[:12]
     prefix=['sudo', cli]
@@ -286,12 +306,12 @@ def qemu_entropy_devices():
             '-device', 'virtio-rng-pci,rng=hosted-rng,max-bytes=1024,period=1000']
 
 
-def qemu_guest_diagnostics(disk):
+def qemu_guest_diagnostics(disk, accelerated=True):
     # QEMU must already be stopped. These tools only read the disposable
     # overlay; the published image and its boot configuration stay intact.
     for title, command in [
-        ('guest journal', ['sudo', 'virt-log', '-a', str(disk)]),
-        ('cloud-init log', ['sudo', 'virt-cat', '-a', str(disk), '/var/log/cloud-init.log']),
+        ('guest journal', guestfs_command('virt-log', accelerated) + ['-a', str(disk)]),
+        ('cloud-init log', guestfs_command('virt-cat', accelerated) + ['-a', str(disk), '/var/log/cloud-init.log']),
     ]:
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=60,
@@ -303,9 +323,11 @@ def qemu_guest_diagnostics(disk):
             print('Offline '+title+' diagnostics unavailable: '+type(error).__name__, file=sys.stderr)
 
 
-def qemu_test(folder, disk):
+def qemu_test(folder, disk, acceleration='auto'):
     arch='arm64' if os.uname().machine=='aarch64' else 'amd64'
-    accelerated=kvm_available()
+    accelerated=qemu_accelerated(acceleration)
+    print('VM_TEST_ACCELERATION requested='+acceleration+' selected='+('kvm' if accelerated else 'tcg')+
+          ' libguestfs='+('auto' if accelerated else 'tcg'), flush=True)
     overlay=folder/'validation-overlay.qcow2'
     run(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(disk.resolve()),str(overlay)])
     info=json.loads(run(['qemu-img','info','--output=json',str(disk)],capture_output=True,text=True).stdout)
@@ -322,9 +344,9 @@ def qemu_test(folder, disk):
     # NoCloud root user entry remain testable without changing the release.
     try:
         consumer_password=secrets.token_urlsafe(32)
-        run(['sudo','virt-customize','-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
+        run(guestfs_command('virt-customize', accelerated)+['-a',str(overlay),'--ssh-inject','root:file:'+str(key.with_suffix('.pub')),
              '--root-password','password:'+consumer_password,'--selinux-relabel','--no-network'],capture_output=True,timeout=600,
-            env=dict(os.environ,LIBGUESTFS_BACKEND='direct'))
+            env=isolated_environment())
     except subprocess.CalledProcessError:
         raise RuntimeError('consumer key provisioning failed on the disposable overlay') from None
     serial=folder/'serial.log';sock=folder/'guest-agent.sock';monitor=folder/'monitor.sock'
@@ -440,7 +462,7 @@ def qemu_test(folder, disk):
     finally:
         stop()
         log.close()
-        if not accepted:qemu_guest_diagnostics(overlay)
+        if not accepted:qemu_guest_diagnostics(overlay, accelerated)
 
 
 def unpack(path, folder, runtime):
@@ -498,13 +520,16 @@ def unpack(path, folder, runtime):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--file',type=Path,required=True)
     parser.add_argument('--runtime',choices=['incus','lxd','qemu'],default='incus')
+    parser.add_argument('--accel', choices=['auto', 'kvm', 'tcg'], default='auto')
     args=parser.parse_args()
+    if args.accel != 'auto' and args.runtime != 'qemu':
+        parser.error('--accel requires --runtime qemu')
     if os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':raise RuntimeError('disposable hosted runner required')
     with tempfile.TemporaryDirectory(prefix='hosted-image-',dir=os.environ.get('RUNNER_TEMP')) as temporary:
         folder=Path(temporary);metadata,rootfs=unpack(args.file,folder,args.runtime)
         vm=rootfs.name.endswith('.qcow2')
         if args.runtime=='qemu' or (vm and not kvm_available()):
-            qemu_test(folder,rootfs)
+            qemu_test(folder,rootfs,args.accel)
         else:
             native_test(folder,metadata,rootfs,vm=vm,cli='/snap/bin/lxc' if args.runtime=='lxd' else 'incus')
     print('IMAGE_TEST_RESULT success=true image='+args.file.name)

@@ -18,7 +18,7 @@ def published(publisher):
     else:raise RuntimeError('release pagination exceeded')
     assets={}
     for release in releases:
-        if release['draft'] or release['prerelease'] or release['tag_name']=='processed':continue
+        if release['draft'] or release['prerelease'] or release['tag_name'] in ('processed', 'legacy-archived'):continue
         for asset in publisher.assets(release['id']).values():
             name=asset['name']
             if asset.get('state')!='uploaded' or not asset.get('size') or not re.fullmatch(r'[A-Za-z0-9_.-]+\.(qcow2|zip|tar\.xz|tar\.zst)',name):continue
@@ -28,21 +28,25 @@ def published(publisher):
     return list(assets.values())
 
 
-def matrix(assets,repo,scope,kind):
+def matrix(assets,repo,scope,kind,acceleration='auto'):
     rows=[]
-    if scope not in ('smoke','full'):raise ValueError('invalid suite scope')
+    if scope not in ('smoke','full','maintained'):raise ValueError('invalid suite scope')
+    if scope == 'maintained' and repo != 'pve_kvm_images':raise ValueError('maintained scope requires the PVE VM catalog')
+    if acceleration not in ('auto','kvm','tcg','both'):raise ValueError('invalid acceleration')
     for asset in sorted(assets,key=lambda a:a['name']):
         name=asset['name'];vm=name.endswith('.qcow2') or name.endswith('_kvm.zip')
         if (kind=='vm')!=vm:continue
         arch='arm64' if re.search(r'_(arm64|aarch64)_',name) else 'amd64'
         if repo=='lxc_amd64_images' and arch!='amd64':continue
         if repo=='lxc_arm_images' and arch!='arm64':continue
+        if scope=='maintained' and (asset['tag']=='images' or name in ('centos8.qcow2','alpine3.20.qcow2')):continue
         if scope=='smoke':
             if name.endswith('.qcow2'):
                 if not re.fullmatch(r'debian(12|13)\.qcow2',name):continue
             elif not re.search(r'^(debian_(12_bookworm|13_trixie)|alpine_3\.24_3\.24)_',name):continue
             elif '_cloud.' in name:continue
-        rows.append({'image':name,'tag':asset['tag'],'arch':arch,'runner':'ubuntu-24.04-arm' if arch=='arm64' else 'ubuntu-24.04'})
+        for mode in ('auto','tcg') if acceleration=='both' else (acceleration,):
+            rows.append({'image':name,'tag':asset['tag'],'arch':arch,'runner':'ubuntu-24.04-arm' if arch=='arm64' else 'ubuntu-24.04', 'acceleration':mode})
     if not rows:raise ValueError('no published images selected')
     if len(rows)>256:raise ValueError('suite exceeds GitHub matrix limit; select a smaller catalog')
     return {'include':rows}
@@ -50,14 +54,15 @@ def matrix(assets,repo,scope,kind):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('command',choices=['matrix','download'])
-    parser.add_argument('--scope',choices=['smoke','full'],default='smoke');parser.add_argument('--kind',choices=['container','vm'],default='container')
+    parser.add_argument('--scope',choices=['smoke','full','maintained'],default='smoke');parser.add_argument('--kind',choices=['container','vm'],default='container')
+    parser.add_argument('--acceleration',choices=['auto','kvm','tcg','both'],default='auto')
     args=parser.parse_args();repo=os.environ['GITHUB_REPOSITORY']
     publisher=Publisher(repo,os.environ['GH_TOKEN'])
     if args.command=='matrix':
         assets=published(publisher)
         if os.environ.get('IMAGE'):
             assets=[a for a in assets if a['name']==os.environ['IMAGE']]
-        value=matrix(assets,repo.split('/')[-1],'full' if os.environ.get('IMAGE') else args.scope,args.kind)
+        value=matrix(assets,repo.split('/')[-1],'full' if os.environ.get('IMAGE') else args.scope,args.kind,args.acceleration)
         encoded=json.dumps(value,separators=(',',':'))
         with open(os.environ['GITHUB_OUTPUT'],'a') as stream:print('matrix='+encoded,file=stream)
         print('Published image test jobs:',len(value['include']))

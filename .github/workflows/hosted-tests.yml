@@ -7,8 +7,18 @@ name: Hosted published image tests
         type: choice
         options:
         - smoke
+        - maintained
         - full
         default: smoke
+      acceleration:
+        description: auto uses KVM when available; tcg forces software for the guest and overlay tools
+        type: choice
+        options:
+        - auto
+        - tcg
+        - kvm
+        - both
+        default: auto
       image:
         description: Exact asset filename; empty selects the suite
         type: string
@@ -18,8 +28,7 @@ name: Hosted published image tests
 permissions:
   contents: read
 concurrency:
-  group: hosted-published-image-tests-${{ inputs.image || inputs.scope || 'smoke'
-    }}
+  group: hosted-published-image-tests-${{ inputs.image || inputs.scope || 'smoke' }}-${{ inputs.acceleration || 'both' }}
   cancel-in-progress: false
 jobs:
   catalog:
@@ -34,8 +43,9 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         SCOPE: ${{ inputs.scope || 'smoke' }}
         IMAGE: ${{ inputs.image }}
+        ACCELERATION: ${{ inputs.acceleration || 'both' }}
       run: python3 .github/scripts/published_image_suite.py matrix --scope "$SCOPE"
-        --kind vm
+        --kind vm --acceleration "$ACCELERATION"
   test:
     needs: catalog
     runs-on: ${{ matrix.runner }}
@@ -57,7 +67,8 @@ jobs:
     - name: Validate guest boot, SSH, network and restart
       env:
         IMAGE: ${{ matrix.image }}
+        ACCELERATION: ${{ matrix.acceleration }}
       run: python3 .github/scripts/hosted_image_test.py --file "$IMAGE" --runtime
-        qemu
+        qemu --accel "$ACCELERATION"
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
