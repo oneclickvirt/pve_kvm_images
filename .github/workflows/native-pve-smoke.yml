@@ -1,0 +1,39 @@
+name: Native PVE image smoke
+on:
+  workflow_dispatch:
+    inputs:
+      outer_acceleration:
+        description: Acceleration for the disposable PVE host; its inner VM always disables KVM
+        type: choice
+        options:
+          - auto
+          - tcg
+        default: auto
+permissions:
+  contents: read
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+concurrency:
+  group: native-pve-image-smoke
+  cancel-in-progress: false
+jobs:
+  native-pve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the disposable host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .github/scripts/ci_network.sh
+          ci_retry sudo apt-get update
+          ci_retry sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client curl
+          if [[ -c /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+      - name: Test real pct and qm on a temporary PVE host
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTER_ACCELERATION: ${{ inputs.outer_acceleration || 'auto' }}
+        run: python3 .github/scripts/native_pve_smoke.py --outer-accel "$OUTER_ACCELERATION"
