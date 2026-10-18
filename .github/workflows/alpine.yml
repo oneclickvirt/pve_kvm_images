@@ -68,7 +68,7 @@ jobs:
         \ \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
         \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong\
         \ \\\n      --append-line \"/etc/conf.d/ntpd:NTPD_OPTS=\\\"-N -p time.apple.com\
-        \ -p time.windows.com\\\"\" \\\n      --run-command \"apk update && apk upgrade\"\
+        \ -p time.windows.com\\\"\" \\\n      --run-command \"apk update\"\
         \ \\\n      --run-command \"apk add sudo qemu-guest-agent bash-completion\
         \ unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools\
         \ zstd cronie lsof openssh openrc\" \\\n      --run-command \"echo '#!/sbin/openrc-run'\
