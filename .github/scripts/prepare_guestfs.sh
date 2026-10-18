@@ -45,7 +45,7 @@ PROBE
 # the script into appliance /tmp so only a plain command is passed through.
 probe_output="$(timeout --kill-after=30s 240s guestfish --network -a "$probe_image" run : debug-upload "$probe_script" /tmp/network-probe.sh 0600 : debug sh 'timeout 30 bash /tmp/network-probe.sh')"
 printf '%s\n' "$probe_output"
-if ! grep -qE '^HTTP/[0-9.]+ [1-5][0-9][0-9]' <<< "$probe_output"; then
+if ! grep -qE '^HTTP/[0-9.]+ [1-5][0-9][0-9]|^network probe passed$' <<< "$probe_output"; then
     echo 'The guest appliance could not resolve and connect to the package mirror' >&2
     exit 1
 fi
