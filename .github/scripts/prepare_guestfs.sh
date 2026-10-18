@@ -23,15 +23,23 @@ probe_script="$(mktemp)"
 trap 'rm -f "$probe_image" "$probe_script"' EXIT
 qemu-img create -f qcow2 "$probe_image" 64M
 cat > "$probe_script" <<'PROBE'
-set -euo pipefail
+# guestfish debug sh always invokes the appliance's POSIX /bin/sh.  Keep this
+# probe POSIX instead of using bash-only /dev/tcp redirections, which made the
+# hosted image builds fail before any image work started on appliances without
+# bash.
+set -eu
 ip -brief address
 ip route
 cat /etc/resolv.conf
-exec 3<>/dev/tcp/archive.ubuntu.com/80
-printf 'HEAD /ubuntu/ HTTP/1.0\r\nHost: archive.ubuntu.com\r\n\r\n' >&3
-IFS= read -r status <&3
-[[ "$status" == HTTP/* ]]
-printf '%s\n' "$status"
+if command -v getent >/dev/null 2>&1; then
+    getent hosts archive.ubuntu.com >/dev/null
+fi
+if command -v wget >/dev/null 2>&1; then
+    wget -q -O /dev/null --timeout=20 http://archive.ubuntu.com/ubuntu/ || exit 1
+elif command -v curl >/dev/null 2>&1; then
+    curl -fsS -o /dev/null --connect-timeout 20 --max-time 30 http://archive.ubuntu.com/ubuntu/ || exit 1
+fi
+echo 'network probe passed'
 PROBE
 # debug sh splits and rejoins arguments, losing nested shell quoting. Upload
 # the script into appliance /tmp so only a plain command is passed through.
