@@ -98,7 +98,7 @@ jobs:
         \  if [ \"$release_id\" = \"null\" ] || [ -z \"$release_id\" ]; then\n            echo \"Release 'debian'\
         \ not found, please create it first\"\n            rm -f debian-${version}.qcow2 debian${version}.qcow2\n\
         \            continue\n        fi\n        echo \"Found release ID: $release_id\"\n        echo \"Checking\
-        \ if $file already exists in release...\"\n        python3 .github/scripts/hosted_image_test.py --file \"\
+        \ if $file already exists in release...\"\n        bash .github/scripts/sanitize_guest.sh \"$file\"\n        python3 .github/scripts/hosted_image_test.py --file \"\
         $file\" --runtime qemu\n        python3 \"$RUNNER_TEMP/ci-release-assets.py\" debian \"$file\"\n       \
         \ uploaded_images=$((uploaded_images + 1))\n    else\n        echo \"File $file does not exist, is too small\
         \ (< 10MB), or is too large (> 2GB)\"\n        if [ -f \"$file\" ]; then\n            file_size=$(stat -c\

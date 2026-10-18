@@ -145,6 +145,7 @@ jobs:
                 fi
                 echo "Found release ID: $release_id"
                 echo "Checking if $file already exists in release..."
+                bash .github/scripts/sanitize_guest.sh "$file"
                 python3 .github/scripts/hosted_image_test.py --file "$file" --runtime qemu
                 python3 "$RUNNER_TEMP/ci-release-assets.py" rockylinux "$file"
                 uploaded_images=$((uploaded_images + 1))

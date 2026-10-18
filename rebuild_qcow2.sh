@@ -354,6 +354,11 @@ sudo virt-customize -v -x -a "$qcow_file" --run-command "echo root:oneclickvirt 
 
 # 不是所有机器都需要IPV6保活，故而暂不添加保活命令
 # sudo virt-customize -v -x -a $qcow_file --run-command "echo '*/1 * * * * curl -m 6 -s ipv6.ip.sb || curl -m 6 -s ipv6.ip.sb' | crontab -"
+echo "清理克隆身份及 DHCP 状态..."
+if ! timeout --kill-after=30s 15m virt-sysprep -a "$qcow_file" --operations machine-id,dhcp-client-state,ssh-hostkeys,udev-persistent-net; then
+    echo "Failed to sanitize guest clone identity" >&2
+    exit 1
+fi
 echo "创建备份..."
 cp "$qcow_file" "${qcow_file}.bak"
 echo "复制新文件..."
