@@ -60,18 +60,12 @@ jobs:
         $expanded_size\"\n        virt-resize --expand \"$root_part\" \"alpine-${version}.qcow2\"\
         \ \"alpine-${version}-expanded.qcow2\"\n        mv \"alpine-${version}-expanded.qcow2\"\
         \ \"alpine-${version}.qcow2\"\n    fi\n\n    echo \"Customizing Alpine $version\
-        \ image\"\n    # 配置阿里云源\n    timeout --kill-after=30s 45m virt-customize -a\
-        \ alpine-${version}.qcow2 \\\n      --run-command \"sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g'\
-        \ /etc/apk/repositories || true\" \\\n      --run-command \"sed -i 's|https://mirrors.aliyun.com|http://mirrors.aliyun.com|g'\
-        \ /etc/apk/repositories || true\" || true\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n\
+        \ image\"\n    # Use the official CDN so an out-of-sync mirror cannot serve a stale index.\n    timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2 \\\n      --run-command \"printf '%s\\n' 'https://dl-cdn.alpinelinux.org/alpine/v${version}/main' 'https://dl-cdn.alpinelinux.org/alpine/v${version}/community' > /etc/apk/repositories\"\n    # 配置镜像并预装软件包（编译阶段完成，减少首次启动时间）\n\
         \    if ! timeout --kill-after=30s 45m virt-customize -a alpine-${version}.qcow2\
         \ \\\n      --run-command \"echo 'nameserver 8.8.8.8' > /etc/resolv.conf;\
         \ echo 'nameserver 1.1.1.1' >> /etc/resolv.conf\" \\\n      --timezone Asia/Hong_Kong\
         \ \\\n      --append-line \"/etc/conf.d/ntpd:NTPD_OPTS=\\\"-N -p time.apple.com\
-        \ -p time.windows.com\\\"\" \\\n      --run-command \"apk update\"\
-        \ \\\n      --run-command \"apk add sudo qemu-guest-agent bash-completion\
-        \ unzip wget curl net-tools iputils nano screen less vim bzip2 mtr htop bind-tools\
-        \ zstd cronie lsof openssh openrc\" \\\n      --run-command \"echo '#!/sbin/openrc-run'\
+        \ -p time.windows.com\\\"\" \\\n      --upload .github/scripts/install_alpine_packages.sh:/tmp/install-alpine-packages.sh \\\n      --run-command \"sh /tmp/install-alpine-packages.sh\" \\\n      --delete /tmp/install-alpine-packages.sh \\\n      --run-command \"echo '#!/sbin/openrc-run'\
         \ > /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"echo 'name=QEMU\
         \ Guest Agent' >> /etc/init.d/qemu-guest-agent\" \\\n      --run-command \"\
         echo 'command=/usr/bin/qemu-ga' >> /etc/init.d/qemu-guest-agent\" \\\n   \
