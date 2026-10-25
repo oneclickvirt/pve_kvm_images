@@ -153,7 +153,11 @@ class QEMUEntropyTests(unittest.TestCase):
              mock.patch.object(runtime.subprocess, 'run', return_value=result) as execute, redirect_stderr(output):
             runtime.qemu_guest_diagnostics(Path('/tmp/disposable-overlay.qcow2'))
         self.assertLess(len(output.getvalue()), 28200)
-        self.assertEqual([call.args[0][3] for call in execute.call_args_list], ['virt-log', 'virt-cat'])
+        self.assertEqual([call.args[0][3] for call in execute.call_args_list],
+                         ['virt-log', 'virt-cat', 'virt-cat', 'virt-cat', 'virt-cat'])
+        self.assertEqual([call.args[0][-1] for call in execute.call_args_list[1:]],
+                         ['/var/log/cloud-init.log', '/var/log/secure',
+                          '/var/log/audit/audit.log', '/etc/ssh/sshd_config'])
         for call in execute.call_args_list:
             self.assertEqual(call.kwargs['timeout'], 60)
             self.assertNotIn('GH_TOKEN', call.kwargs['env'])
