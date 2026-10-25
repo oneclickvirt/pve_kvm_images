@@ -312,13 +312,16 @@ def qemu_guest_diagnostics(disk, accelerated=True):
     for title, command in [
         ('guest journal', guestfs_command('virt-log', accelerated) + ['-a', str(disk)]),
         ('cloud-init log', guestfs_command('virt-cat', accelerated) + ['-a', str(disk), '/var/log/cloud-init.log']),
+        ('SSH authentication log', guestfs_command('virt-cat', accelerated) + ['-a', str(disk), '/var/log/secure']),
+        ('SELinux audit log', guestfs_command('virt-cat', accelerated) + ['-a', str(disk), '/var/log/audit/audit.log']),
+        ('SSH configuration', guestfs_command('virt-cat', accelerated) + ['-a', str(disk), '/etc/ssh/sshd_config']),
     ]:
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=60,
                                     check=False, env=isolated_environment())
             details = '\n'.join(part for part in (result.stdout, result.stderr) if part).strip()
             if details:
-                print('Offline '+title+' diagnostics:\n'+details[-14000:], file=sys.stderr)
+                print('Offline '+title+' diagnostics:\n'+details[-5000:], file=sys.stderr)
         except (OSError, subprocess.SubprocessError) as error:
             print('Offline '+title+' diagnostics unavailable: '+type(error).__name__, file=sys.stderr)
 
@@ -390,6 +393,7 @@ def qemu_test(folder, disk, acceleration='auto'):
         # own bounded budget, rather than resetting time for every fallback.
         deadline=initial_deadline if previous is None else time.monotonic()+readiness_budget
         last_error='guest execution unavailable';agent_disabled=False
+        ssh_errors={}
         began=time.monotonic()
         serial_size=-1;serial_changed=began
         while time.monotonic()<deadline:
@@ -405,7 +409,11 @@ def qemu_test(folder, disk, acceleration='auto'):
                 try:
                     boot=ssh_command(port,key,CHECK,password)
                     if boot and boot!=previous:transport='SSH';ssh_password=password;return boot
-                except subprocess.CalledProcessError as error:last_error=(error.stderr or str(error))[-1500:]
+                except subprocess.CalledProcessError as error:
+                    label='key' if password is None else 'consumer password' if password==consumer_password else 'legacy password'
+                    details='\n'.join(part for part in (error.stdout,error.stderr) if part)
+                    ssh_errors[label]=f'exit={error.returncode}: '+details[-1500:]
+                    last_error=ssh_errors[label]
                 except (subprocess.SubprocessError,OSError) as error:last_error=type(error).__name__
             # A confirmed firmware shell has no guest kernel. Retry once with
             # SeaBIOS on AMD64; keep the same guest assertions and overlay.
@@ -436,6 +444,8 @@ def qemu_test(folder, disk, acceleration='auto'):
         qemu_host_diagnostics(monitor)
         print((folder/'qemu.log').read_text(errors='replace')[-3000:])
         print('Last guest readiness error: '+last_error)
+        for label,details in ssh_errors.items():
+            print('Last SSH '+label+' check: '+details)
         raise RuntimeError('software or hardware VM readiness budget exhausted')
     accepted=False
     try:
