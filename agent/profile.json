@@ -1,0 +1,24 @@
+{
+  "repository": "oneclickvirt/pve_kvm_images",
+  "branch": "main",
+  "skill_name": "oneclickvirt-pve-kvm-images",
+  "purpose": "Find and verify current pve_kvm_images operating-system image release assets for a compatible virtualization runtime.",
+  "notes": [
+    "Resolve the requested operating-system tag with release_assets; latest is only the most recent release, not a complete catalogue of distributions.",
+    "Filter asset names using the requested OS and architecture; an empty match means unavailable, never substitute amd64 for ARM64.",
+    "Keep rootfs/LXC, Incus/LXD metadata pairs, QCOW2/KVM and ISO artifacts distinct. Review published checksum/validation metadata before importing; do not execute templates as programs."
+  ],
+  "guide": "https://www.spiritlhl.net/guide/agent_integrations.html",
+  "releases": true,
+  "mcp": true,
+  "source_files": [
+    "rebuild_qcow2.sh",
+    "test.sh"
+  ],
+  "purpose_zh": "查找并校验 pve_kvm_images 中适用于目标虚拟化环境的系统镜像产物。",
+  "notes_zh": [
+    "用 release_assets 查询所需操作系统的实际标签；latest 仅代表最近一次发布，不代表全部发行版目录。",
+    "按系统及架构过滤真实文件名；结果为空即为不可用，不自动以 amd64 替代 ARM64。",
+    "区分 rootfs/LXC、Incus/LXD 元数据配对、QCOW2/KVM 和 ISO，导入前核对校验及验证信息，不将模板当作程序执行。"
+  ]
+}

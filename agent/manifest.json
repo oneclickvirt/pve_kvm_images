@@ -1,0 +1,11 @@
+{
+  "repository": "oneclickvirt/pve_kvm_images",
+  "skill_name": "oneclickvirt-pve-kvm-images",
+  "mcp": true,
+  "files": {
+    "agent/profile.json": "2e4770557cc371bdeea66463959aa4ace14f190b60b97d973219e90fb7c15d63",
+    "skills/oneclickvirt-pve-kvm-images/SKILL.md": "c87354cb765996b43890706c3cead768b5a6a2ef97b824cde8c9024554c93960",
+    "skills/oneclickvirt-pve-kvm-images/SKILL_ZH.md": "1608c5f251065b5aae310988f489ebabbd5321b153a3f947b5036279e9f3ae2c",
+    "agent/server.py": "d01416e6194095d90bf0d49ea29f7122969f0b74cf4d74ed0b1ce78753423a7d"
+  }
+}
